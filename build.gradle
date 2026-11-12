@@ -1,0 +1,48 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.148'
+}
+
+group = 'dev.goldar'
+version = mod_version
+base.archivesName = 'goldar'
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+
+processResources {
+    def props = [mod_version: project.version]
+    inputs.properties props
+    filesMatching('META-INF/neoforge.mods.toml') { expand props }
+}
+
+repositories { mavenCentral() }
+
+neoForge {
+    version = neoforge_version
+    runs {
+        server {
+            server()
+            gameDirectory = file('run')
+            programArgument '--nogui'
+        }
+        client {
+            client()
+            gameDirectory = file('run')
+        }
+    }
+    mods {
+        goldar { sourceSet sourceSets.main }
+    }
+    addModdingDependenciesTo(sourceSets.test)
+}
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.compilerArgs += ['-Xmaxerrs', '500']
+}
+
+tasks.withType(Test).configureEach { useJUnitPlatform() }

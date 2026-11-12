@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Goldar Glass</title>
+<style>
+  :root { color-scheme: light dark; --line: #8884; --dim: #888; }
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 0; padding: 16px; max-width: 980px; margin-inline: auto; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.sub { color: var(--dim); margin: 0 0 16px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 20px 0 8px; }
+  .agents { display: flex; flex-wrap: wrap; gap: 8px; }
+  .agent { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; min-width: 190px; }
+  .agent b { display: block; }
+  .agent span { color: var(--dim); font-size: 12px; display: block; }
+  .row { border-top: 1px solid var(--line); padding: 8px 0; display: grid; grid-template-columns: 150px 1fr; gap: 8px; }
+  .row .who { color: var(--dim); font-size: 12px; }
+  .row .tool { font-family: ui-monospace, monospace; }
+  .row .why { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .row .out { color: var(--dim); font-size: 12px; }
+  .empty { color: var(--dim); padding: 12px 0; }
+  @media (max-width: 600px) { .row { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<h1>Goldar Glass</h1>
+<p class="sub">What the minds are doing. Living minds are shown after a delay; nothing here reaches them.</p>
+<h2>Agents</h2>
+<div class="agents" id="agents"><div class="empty">No agents yet.</div></div>
+<h2>Thought stream</h2>
+<div id="stream"><div class="empty" id="none">Nothing to show yet.</div></div>
+<script>
+  const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  const seen = new Set();
+  function row(t) {
+    if (seen.has(t.thought_id)) return null;
+    seen.add(t.thought_id);
+    const r = el('div', 'row');
+    const who = el('div', 'who');
+    who.append(el('b', '', t.name), el('div', '', 'day ' + t.world_day + ' · ' + new Date(t.at).toLocaleTimeString()));
+    const what = el('div');
+    what.append(el('div', 'tool', t.kind === 'reflex' ? 'reflex: ' + t.tool : t.tool));
+    if (t.reasoning) what.append(el('div', 'why', t.reasoning));
+    what.append(el('div', 'out', t.outcome + (t.credits ? ' · ' + t.credits + ' credit' + (t.credits === 1 ? '' : 's') : '')));
+    r.append(who, what);
+    return r;
+  }
+  const stream = document.getElementById('stream');
+  function add(t, top) {
+    const r = row(t);
+    if (!r) return;
+    const none = document.getElementById('none');
+    if (none) none.remove();
+    if (top) stream.prepend(r); else stream.append(r);
+  }
+  async function agents() {
+    try {
+      const list = await (await fetch('/api/agents')).json();
+      const box = document.getElementById('agents');
+      box.replaceChildren();
+      if (!list.length) box.append(el('div', 'empty', 'No agents yet.'));
+      for (const a of list) {
+        const card = el('div', 'agent');
+        card.append(el('b', '', a.name), el('span', '', a.agent_id + (a.ended ? ' · life ended' : a.awake ? ' · awake' : ' · asleep')));
+        if (a.position) card.append(el('span', '', 'at ' + a.position.x + ', ' + a.position.y + ', ' + a.position.z));
+        if (a.health != null) card.append(el('span', '', 'health ' + a.health + ' · hunger ' + a.hunger));
+        box.append(card);
+      }
+    } catch (e) { /* the server is away; try again on the next turn */ }
+  }
+  async function start() {
+    try {
+      const page = await (await fetch('/api/thoughts?limit=100')).json();
+      for (const t of page.thoughts) add(t, false);
+    } catch (e) { /* shown once the stream connects */ }
+    const connect = () => {
+      const es = new EventSource('/api/stream');
+      es.addEventListener('thought', e => add(JSON.parse(e.data), true));
+      es.onerror = () => { es.close(); setTimeout(connect, 3000); };
+    };
+    connect();
+    agents();
+    setInterval(agents, 5000);
+  }
+  start();
+</script>
+</body>
+</html>

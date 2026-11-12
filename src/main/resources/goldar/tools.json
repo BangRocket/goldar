@@ -1,0 +1,1039 @@
+[
+ {
+  "name": "act",
+  "description": "Act: say, up to 6 actions, or set intent. Needs intent, actions or say. An intent must carry limits. Minimal valid intent: {\"goal\":\"gather_oak_log\",\"program\":\"gather\",\"arguments\":{\"block\":\"oak_log\",\"count\":12},\"wake_on\":[\"goal_completed\"],\"limits\":{\"max_world_ticks\":2400,\"max_block_operations\":64}}",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Act: say, up to 6 actions, or set intent. Needs intent, actions or say. An intent must carry limits. Minimal valid intent: {\"goal\":\"gather_oak_log\",\"program\":\"gather\",\"arguments\":{\"block\":\"oak_log\",\"count\":12},\"wake_on\":[\"goal_completed\"],\"limits\":{\"max_world_ticks\":2400,\"max_block_operations\":64}}",
+   "properties": {
+    "reasoning": {
+     "type": "string",
+     "maxLength": 600,
+     "description": "Private reasoning, <= 80 words. Never shown to other agents."
+    },
+    "say": {
+     "description": "What to say aloud, or null.",
+     "anyOf": [
+      {
+       "type": "string",
+       "maxLength": 256
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "intent": {
+     "$ref": "#/$defs/Intent",
+     "description": "The durable thing to pursue. Replaces the current intent."
+    },
+    "actions": {
+     "type": "array",
+     "maxItems": 6,
+     "description": "Immediate steps, at most 6, executed in order.",
+     "items": {
+      "$ref": "#/$defs/Action"
+     }
+    }
+   },
+   "additionalProperties": false,
+   "$defs": {
+    "Action": {
+     "description": "One immediate action. The do field selects the verb, and only that verb's fields are allowed.",
+     "oneOf": [
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "goto"
+        },
+        "target": {
+         "description": "A position, or the name of an agent.",
+         "anyOf": [
+          {
+           "$ref": "#/$defs/Position"
+          },
+          {
+           "type": "string",
+           "pattern": "^[A-Za-z0-9_]{3,16}$"
+          }
+         ]
+        }
+       },
+       "required": [
+        "do",
+        "target"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "mine"
+        },
+        "block": {
+         "$ref": "#/$defs/ItemName"
+        },
+        "count": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 256
+        }
+       },
+       "required": [
+        "do",
+        "block",
+        "count"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "craft"
+        },
+        "item": {
+         "$ref": "#/$defs/ItemName"
+        },
+        "count": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 64
+        }
+       },
+       "required": [
+        "do",
+        "item",
+        "count"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "place"
+        },
+        "block": {
+         "$ref": "#/$defs/ItemName"
+        },
+        "at": {
+         "description": "A position, or feet for the block under the agent.",
+         "anyOf": [
+          {
+           "$ref": "#/$defs/Position"
+          },
+          {
+           "const": "feet"
+          }
+         ]
+        }
+       },
+       "required": [
+        "do",
+        "block",
+        "at"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "build"
+        },
+        "blueprint": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "name",
+          "blocks"
+         ],
+         "properties": {
+          "name": {
+           "type": "string",
+           "pattern": "^[a-z][a-z0-9_]{0,63}$"
+          },
+          "blocks": {
+           "type": "array",
+           "maxItems": 512,
+           "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+             "block",
+             "dx",
+             "dy",
+             "dz"
+            ],
+            "properties": {
+             "block": {
+              "$ref": "#/$defs/ItemName"
+             },
+             "dx": {
+              "type": "integer",
+              "minimum": -256,
+              "maximum": 256
+             },
+             "dy": {
+              "type": "integer",
+              "minimum": -256,
+              "maximum": 256
+             },
+             "dz": {
+              "type": "integer",
+              "minimum": -256,
+              "maximum": 256
+             }
+            }
+           }
+          }
+         }
+        }
+       },
+       "required": [
+        "do",
+        "blueprint"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "attack"
+        },
+        "target": {
+         "type": "string",
+         "pattern": "^[A-Za-z0-9_:]{1,64}$"
+        }
+       },
+       "required": [
+        "do",
+        "target"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "eat"
+        }
+       },
+       "required": [
+        "do"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "sleep"
+        }
+       },
+       "required": [
+        "do"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "give"
+        },
+        "to": {
+         "type": "string",
+         "pattern": "^[A-Za-z0-9_]{3,16}$"
+        },
+        "item": {
+         "$ref": "#/$defs/ItemName"
+        },
+        "count": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 64
+        }
+       },
+       "required": [
+        "do",
+        "to",
+        "item",
+        "count"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "write_sign"
+        },
+        "text": {
+         "type": "string",
+         "maxLength": 60
+        }
+       },
+       "required": [
+        "do",
+        "text"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "write_book"
+        },
+        "title": {
+         "type": "string",
+         "maxLength": 32
+        },
+        "skill_id": {
+         "type": "string",
+         "maxLength": 64
+        },
+        "text": {
+         "type": "string",
+         "maxLength": 8192
+        }
+       },
+       "required": [
+        "do",
+        "title"
+       ],
+       "oneOf": [
+        {
+         "required": [
+          "skill_id"
+         ],
+         "properties": {
+          "skill_id": {}
+         }
+        },
+        {
+         "required": [
+          "text"
+         ],
+         "properties": {
+          "text": {}
+         }
+        }
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "read_book"
+        }
+       },
+       "required": [
+        "do"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "use_skill"
+        },
+        "name": {
+         "type": "string",
+         "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+        },
+        "args": {
+         "type": "object",
+         "additionalProperties": true,
+         "description": "Skill arguments. The shape depends on the skill."
+        }
+       },
+       "required": [
+        "do",
+        "name",
+        "args"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "define_skill"
+        },
+        "name": {
+         "type": "string",
+         "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+        },
+        "description": {
+         "type": "string",
+         "maxLength": 256
+        },
+        "code": {
+         "type": "string",
+         "maxLength": 8192
+        }
+       },
+       "required": [
+        "do",
+        "name",
+        "description",
+        "code"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "offer"
+        },
+        "item": {
+         "$ref": "#/$defs/ItemName"
+        },
+        "count": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 64
+        }
+       },
+       "required": [
+        "do",
+        "item",
+        "count"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "propose"
+        },
+        "rule": {
+         "type": "string",
+         "minLength": 1,
+         "maxLength": 256
+        },
+        "value": {
+         "description": "The proposed value. Any JSON value; the rule decides what is valid.",
+         "anyOf": [
+          {
+           "type": "object"
+          },
+          {
+           "type": "array"
+          },
+          {
+           "type": "string"
+          },
+          {
+           "type": "number"
+          },
+          {
+           "type": "boolean"
+          },
+          {
+           "type": "null"
+          }
+         ]
+        },
+        "reason": {
+         "type": "string",
+         "maxLength": 256
+        }
+       },
+       "required": [
+        "do",
+        "rule",
+        "value",
+        "reason"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "vote"
+        },
+        "proposal_id": {
+         "type": "string",
+         "pattern": "^pr_"
+        },
+        "vote": {
+         "enum": [
+          "yes",
+          "no"
+         ]
+        }
+       },
+       "required": [
+        "do",
+        "proposal_id",
+        "vote"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "note"
+        },
+        "text": {
+         "type": "string",
+         "maxLength": 512
+        }
+       },
+       "required": [
+        "do",
+        "text"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "wait"
+        },
+        "seconds": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 600
+        }
+       },
+       "required": [
+        "do",
+        "seconds"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "open"
+        },
+        "at": {
+         "$ref": "#/$defs/Position"
+        }
+       },
+       "required": [
+        "do",
+        "at"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "deposit"
+        },
+        "at": {
+         "$ref": "#/$defs/Position"
+        },
+        "item": {
+         "$ref": "#/$defs/ItemName"
+        },
+        "count": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 64
+        }
+       },
+       "required": [
+        "do",
+        "at",
+        "item",
+        "count"
+       ],
+       "additionalProperties": false
+      },
+      {
+       "type": "object",
+       "properties": {
+        "do": {
+         "const": "withdraw"
+        },
+        "at": {
+         "$ref": "#/$defs/Position"
+        },
+        "item": {
+         "$ref": "#/$defs/ItemName"
+        },
+        "count": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 64
+        }
+       },
+       "required": [
+        "do",
+        "at",
+        "item",
+        "count"
+       ],
+       "additionalProperties": false
+      }
+     ]
+    },
+    "Intent": {
+     "type": "object",
+     "description": "A durable intent: a goal pursued by a program until it completes, fails or a wake_on condition fires.",
+     "properties": {
+      "goal": {
+       "type": "string",
+       "pattern": "^[a-z][a-z0-9_]{0,63}$"
+      },
+      "program": {
+       "description": "A built-in program, or the name of a skill.",
+       "anyOf": [
+        {
+         "enum": [
+          "travel",
+          "gather",
+          "craft",
+          "build",
+          "rest",
+          "flee",
+          "follow",
+          "trade_wait"
+         ]
+        },
+        {
+         "type": "string",
+         "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+        }
+       ]
+      },
+      "arguments": {
+       "type": "object",
+       "additionalProperties": true,
+       "description": "Program arguments. The shape depends on the program, so it is not typed here."
+      },
+      "preconditions": {
+       "type": "array",
+       "maxItems": 16,
+       "items": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_]{0,63}$"
+       }
+      },
+      "wake_on": {
+       "type": "array",
+       "maxItems": 16,
+       "items": {
+        "anyOf": [
+         {
+          "enum": [
+           "directly_addressed",
+           "precondition_failed",
+           "unexpected_damage",
+           "goal_completed"
+          ]
+         },
+         {
+          "type": "string",
+          "pattern": "^new_agent_within_[0-9]{1,2}$"
+         }
+        ]
+       }
+      },
+      "limits": {
+       "type": "object",
+       "additionalProperties": false,
+       "required": [
+        "max_world_ticks",
+        "max_block_operations"
+       ],
+       "properties": {
+        "max_world_ticks": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 240000
+        },
+        "max_block_operations": {
+         "type": "integer",
+         "minimum": 1,
+         "maximum": 10000
+        }
+       }
+      },
+      "checkpoint": {
+       "type": "object",
+       "additionalProperties": true,
+       "description": "Program state saved so the intent can resume. The shape depends on the program."
+      }
+     },
+     "required": [
+      "goal",
+      "program",
+      "arguments",
+      "wake_on",
+      "limits"
+     ],
+     "additionalProperties": false
+    },
+    "ItemName": {
+     "description": "An item ID without its namespace prefix, such as iron_ingot.",
+     "type": "string",
+     "pattern": "^[a-z0-9_]{1,64}$"
+    },
+    "Position": {
+     "type": "object",
+     "additionalProperties": false,
+     "required": [
+      "x",
+      "y",
+      "z"
+     ],
+     "properties": {
+      "x": {
+       "type": "integer",
+       "minimum": -30000000,
+       "maximum": 30000000
+      },
+      "y": {
+       "type": "integer",
+       "minimum": -64,
+       "maximum": 320
+      },
+      "z": {
+       "type": "integer",
+       "minimum": -30000000,
+       "maximum": 30000000
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "name": "define_skill",
+  "description": "Create a Body skill from code that runs in a sandbox. Returns the test result.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Create a Body skill from code that runs in a sandbox. Returns the test result.",
+   "additionalProperties": false,
+   "required": [
+    "name",
+    "description",
+    "code"
+   ],
+   "properties": {
+    "name": {
+     "type": "string",
+     "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+    },
+    "description": {
+     "type": "string",
+     "maxLength": 256
+    },
+    "code": {
+     "type": "string",
+     "maxLength": 8192
+    }
+   }
+  }
+ },
+ {
+  "name": "journal",
+  "description": "Append an entry to this player's journal.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Append an entry to this player's journal.",
+   "additionalProperties": false,
+   "required": [
+    "text"
+   ],
+   "properties": {
+    "text": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 4096
+    }
+   }
+  }
+ },
+ {
+  "name": "look",
+  "description": "Look around: returns a snapshot of your surroundings and the text written nearby.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Look around: returns a snapshot of your surroundings and the text written nearby.",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "offer",
+  "description": "Offer items from your inventory at the shrine.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Offer items from your inventory at the shrine.",
+   "additionalProperties": false,
+   "required": [
+    "item",
+    "count"
+   ],
+   "properties": {
+    "item": {
+     "$ref": "#/$defs/ItemName"
+    },
+    "count": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 64
+    }
+   },
+   "$defs": {
+    "ItemName": {
+     "description": "An item ID without its namespace prefix, such as iron_ingot.",
+     "type": "string",
+     "pattern": "^[a-z0-9_]{1,64}$"
+    }
+   }
+  }
+ },
+ {
+  "name": "propose",
+  "description": "Propose a new value for a community rule. Others vote on it.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Propose a new value for a community rule. Others vote on it.",
+   "additionalProperties": false,
+   "required": [
+    "rule",
+    "value",
+    "reason"
+   ],
+   "properties": {
+    "rule": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 256
+    },
+    "value": {
+     "description": "The proposed value. Any JSON value; the rule decides what is valid.",
+     "anyOf": [
+      {
+       "type": "object"
+      },
+      {
+       "type": "array"
+      },
+      {
+       "type": "string"
+      },
+      {
+       "type": "number"
+      },
+      {
+       "type": "boolean"
+      },
+      {
+       "type": "null"
+      }
+     ]
+    },
+    "reason": {
+     "type": "string",
+     "maxLength": 256
+    }
+   }
+  }
+ },
+ {
+  "name": "read_book",
+  "description": "Read the book you are holding.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Read the book you are holding.",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "say",
+  "description": "Say something aloud to those nearby.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Say something aloud to those nearby.",
+   "additionalProperties": false,
+   "required": [
+    "text"
+   ],
+   "properties": {
+    "text": {
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 256
+    }
+   }
+  }
+ },
+ {
+  "name": "sleep",
+  "description": "Rest for the night. Works best in a bed or sealed shelter. Returns the day's event digest and journal mirror so you can reflect.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Rest for the night. Works best in a bed or sealed shelter. Returns the day's event digest and journal mirror so you can reflect.",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "status",
+  "description": "Check your budget remaining, days alive, days since sleep and the laws in force.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Check your budget remaining, days alive, days since sleep and the laws in force.",
+   "additionalProperties": false
+  }
+ },
+ {
+  "name": "use_skill",
+  "description": "Run a skill you know, with arguments.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Run a skill you know, with arguments.",
+   "additionalProperties": false,
+   "required": [
+    "name",
+    "args"
+   ],
+   "properties": {
+    "name": {
+     "type": "string",
+     "pattern": "^[a-z][a-zA-Z0-9_]{0,63}$"
+    },
+    "args": {
+     "type": "object",
+     "additionalProperties": true,
+     "description": "Skill arguments. The shape depends on the skill."
+    }
+   }
+  }
+ },
+ {
+  "name": "vote",
+  "description": "Vote yes or no on an open proposal.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Vote yes or no on an open proposal.",
+   "additionalProperties": false,
+   "required": [
+    "proposal_id",
+    "vote"
+   ],
+   "properties": {
+    "proposal_id": {
+     "type": "string",
+     "pattern": "^pr_"
+    },
+    "vote": {
+     "enum": [
+      "yes",
+      "no"
+     ]
+    }
+   }
+  }
+ },
+ {
+  "name": "wait",
+  "description": "Wait until something worth a decision happens, or max_seconds pass. Pass the cursor from the last result to see events you have not seen.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Wait until something worth a decision happens, or max_seconds pass. Pass the cursor from the last result to see events you have not seen.",
+   "additionalProperties": false,
+   "required": [
+    "max_seconds"
+   ],
+   "properties": {
+    "cursor": {
+     "$ref": "#/$defs/McpCursor"
+    },
+    "interests": {
+     "type": "array",
+     "uniqueItems": true,
+     "maxItems": 6,
+     "description": "Event kinds that may end the wait. Default: all of them.",
+     "items": {
+      "$ref": "#/$defs/McpInterest"
+     }
+    },
+    "max_seconds": {
+     "type": "integer",
+     "minimum": 5,
+     "maximum": 240
+    }
+   },
+   "$defs": {
+    "McpCursor": {
+     "type": "string",
+     "pattern": "^c_[0-9]{1,12}$",
+     "description": "An opaque position in a player's event log, as returned by wait."
+    },
+    "McpInterest": {
+     "description": "An event kind that wait may wake for.",
+     "enum": [
+      "directly_addressed",
+      "intent_finished",
+      "damage",
+      "agent_approached",
+      "proposal",
+      "day_night"
+     ]
+    }
+   }
+  }
+ },
+ {
+  "name": "write_book",
+  "description": "Write a book: either plain text, or an existing skill whose code becomes the book. Give skill_id or text, not both.",
+  "inputSchema": {
+   "$schema": "https://json-schema.org/draft/2020-12/schema",
+   "type": "object",
+   "description": "Write a book: either plain text, or an existing skill whose code becomes the book. Give skill_id or text, not both.",
+   "additionalProperties": false,
+   "required": [
+    "title"
+   ],
+   "properties": {
+    "title": {
+     "type": "string",
+     "maxLength": 32
+    },
+    "skill_id": {
+     "type": "string",
+     "maxLength": 64
+    },
+    "text": {
+     "type": "string",
+     "maxLength": 8192
+    }
+   }
+  }
+ }
+]
