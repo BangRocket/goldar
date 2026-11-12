@@ -314,6 +314,15 @@ public final class World {
         }
     }
 
+    /** Something in the world told this one body a thing in words, as a colony tells its owner. Server thread only. */
+    void told(Body b, String from, String text) {
+        String line = Voice.clean(text, Voice.MAX_LINE_CHARS);
+        if (line.isEmpty()) return;
+        long tick = tick();
+        b.mind.hear(from, line, tick);
+        b.mind.speech(tick, from, line, true);
+    }
+
     /** A person typed in chat: the bodies near them hear it as they hear each other. Server thread only. */
     public void onChat(ServerPlayer player, String text) {
         if (player instanceof Body) return;

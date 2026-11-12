@@ -29,6 +29,9 @@ abstract class BodyBase extends ServerPlayer {
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException("Could not prepare a body's connection", e);
             }
+            // Other mods send their own payloads to every player who joins, and NeoForge refuses one for a
+            // connection that never agreed its channels. This marks every channel as agreed; send still drops them.
+            net.neoforged.neoforge.network.registration.NetworkRegistry.configureMockConnection(this);
         }
 
         @Override public void send(Packet<?> packet, ChannelFutureListener listener, boolean flush) {}

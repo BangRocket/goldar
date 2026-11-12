@@ -25,6 +25,9 @@ public final class Body extends BodyBase {
     public int blockOperations;
     /** The body tick on which it was last hurt, and on which it last followed a path. */
     public int lastHurtTick = -1000, pathTick = -1000;
+    /** The last thing a colony told this body, and the body tick it came on. */
+    String lastTold;
+    int lastToldTick = -1000;
     private float forward;
     private boolean jump;
 

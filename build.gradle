@@ -27,7 +27,11 @@ processResources {
     filesMatching('META-INF/neoforge.mods.toml') { expand props }
 }
 
-repositories { mavenCentral() }
+repositories {
+    mavenCentral()
+    // MineColonies and the mods it is built on, for the Minecraft versions whose bodies can work with it.
+    if (v.minecolonies) maven { url = 'https://ldtteam.jfrog.io/artifactory/modding/'; content { includeGroup 'com.ldtteam' } }
+}
 
 neoForge {
     version = v.neoforge_version
@@ -49,6 +53,12 @@ neoForge {
 }
 
 dependencies {
+    if (v.minecolonies) {
+        compileOnly("com.ldtteam:minecolonies:${v.minecolonies}") { transitive = false }
+        compileOnly("com.ldtteam:structurize:${v.structurize}") { transitive = false }
+        compileOnly("com.ldtteam:blockui:${v.blockui}") { transitive = false }
+        compileOnly("com.ldtteam:domum-ornamentum:${v.domum_ornamentum}:main") { transitive = false }
+    }
     testImplementation 'org.junit.jupiter:junit-jupiter:5.11.4'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }

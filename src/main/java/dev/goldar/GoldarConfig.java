@@ -55,6 +55,8 @@ public final class GoldarConfig {
     public boolean books = false, shrine = false, governance = false, extra_actions = false, day_night_events = false;
     /** How far from the origin a plan may point, as Geldar's world border sets it. 0 for no limit. */
     public int world_border_radius = 1500;
+    /** With MineColonies installed: the building style of a colony a body founds. Empty takes the first installed. */
+    public String colony_style = "";
     /** Reflexes switched off, by name. */
     public java.util.Set<String> reflexes_off = new java.util.HashSet<>();
     /** The Glass: the page people watch from. It is never shown to minds. */

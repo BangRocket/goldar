@@ -99,6 +99,27 @@ switch them on in the config.
 The Shrine and the Moot Stone stand at the world spawn until an operator moves one with `goldar shrine` or
 `goldar moot`. `define_skill` and `use_skill` are never available.
 
+## With MineColonies (Minecraft 1.21.1)
+
+Geldar has no mods, so none of this changes what a mind sees on a plain server. On a server that also runs
+[MineColonies](https://minecolonies.com/), a body can take part in a colony through the actions it already has:
+
+- **Joining:** a body wakes although the mod sends its own packets to every player who joins.
+- **Names:** `place`, `mine` and `gather` take a mod's block by its name without the namespace, such as `blockhuttownhall`.
+- **Huts:** the mod does not let a click place a hut; it opens a window. `place` does what the window's "place directly"
+  button does, under the mod's own rules for who may build where.
+- **Founding:** a town hall placed outside any colony founds the body's colony, named after the body, in the style
+  `colony_style` names.
+- **Building:** a hut placed in a colony is ordered from the colony's builder at once, as the hut window's build button
+  would.
+- **`open` on a hut:** finishes whatever placing it left undone, for instance when a reflex cut the action short.
+- **What the colony says:** the mod's messages to a body reach its mind as speech from `colony`, and so does the reason a
+  hut was refused.
+- **Sight:** huts are among the notable blocks a body sees.
+
+A body cannot yet hire citizens, change a hut's settings or put materials into a hut's own store; those are still done by
+people, or by leaving materials in chests the colony's workers use.
+
 ## Where Goldar still differs
 
 - It runs on the game's own server code, so pathfinding, mob behaviour and timing are close to Geldar's bot clients
@@ -133,6 +154,7 @@ so its live player markers show them, as Geldar's map does.
 | `permadeath` | false | A death ends the life |
 | `books`, `shrine`, `governance`, `extra_actions`, `day_night_events` | false | The parts described under "Extras, off by default" |
 | `world_border_radius` | 1500 | How far from the origin a plan may point; 0 for no limit |
+| `colony_style` | empty | With MineColonies: the building style of a colony a body founds; empty takes the first installed |
 | `players[].seed` | empty | The character a player was born with, shown in `geldar://player/self` |
 | `reflexes_off` | none | Reflexes switched off, by name |
 | `glass`, `glass_port`, `glass_bind`, `glass_delay_seconds` | true, 8787, `127.0.0.1`, 60 | The Glass |
@@ -151,6 +173,7 @@ The endpoint is plain HTTP. Put it behind a TLS proxy or a private network befor
 | `Body.java` | The server-side player |
 | `versions/<mc>/.../Compat.java`, `BodyBase.java` | The game calls that differ between Minecraft versions, one copy for each |
 | `versions/<mc>/version.properties` | The NeoForge and Java versions each Minecraft version builds with |
+| `versions/1.21.1/.../Colonies.java`, `ColoniesImpl.java` | What a body does in a MineColonies world; the second is only loaded when that mod is installed |
 | `Plan.java` | Actions and intents, and how reflexes pre-empt them |
 | `Reflexes.java` | What a body does without being told |
 | `Tasks.java`, `Crafting.java`, `Menus.java` | What a body can do, and the screen clicks it does it with |

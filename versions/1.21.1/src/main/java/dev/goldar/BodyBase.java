@@ -28,6 +28,9 @@ abstract class BodyBase extends ServerPlayer {
             } catch (ReflectiveOperationException e) {
                 throw new IllegalStateException("Could not prepare a body's connection", e);
             }
+            // Other mods send their own payloads to every player who joins, and NeoForge refuses one for a
+            // connection that never agreed its channels. This marks every channel as agreed; send still drops them.
+            net.neoforged.neoforge.network.registration.NetworkRegistry.configureMockConnection(this);
         }
 
         @Override public void send(Packet<?> packet, PacketSendListener listener, boolean flush) {}
@@ -61,6 +64,12 @@ abstract class BodyBase extends ServerPlayer {
         boolean hurt = super.hurt(source, damage);
         if (hurt) struck(before);
         return hurt;
+    }
+
+    /** No client reads what the server tells this player, but a colony's word is passed on to the mind. */
+    @Override public void sendSystemMessage(net.minecraft.network.chat.Component message, boolean overlay) {
+        super.sendSystemMessage(message, overlay);
+        if (this instanceof Body body) Colonies.told(body, message);
     }
 
     /** A blow landed. `before` is the health and absorption the body had. */

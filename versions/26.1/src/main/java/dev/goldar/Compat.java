@@ -43,7 +43,13 @@ final class Compat {
 
     static String name(GameProfile profile) { return profile.name(); }
 
-    static Optional<Block> block(String name) { return BuiltInRegistries.BLOCK.getOptional(Identifier.withDefaultNamespace(name)); }
+    /** The block a mind names. Names carry no namespace, so the game's own block comes first, then any mod's of that name. */
+    static Optional<Block> block(String name) {
+        Optional<Block> own = BuiltInRegistries.BLOCK.getOptional(Identifier.withDefaultNamespace(name));
+        if (own.isPresent()) return own;
+        for (var key : BuiltInRegistries.BLOCK.keySet()) if (key.getPath().equals(name)) return BuiltInRegistries.BLOCK.getOptional(key);
+        return Optional.empty();
+    }
 
     static Vec3 unit(Direction d) { return Vec3.atLowerCornerOf(d.getUnitVec3i()); }
 

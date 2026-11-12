@@ -248,6 +248,7 @@ public final class Tasks {
         private final BlockPos target;
         private Walk walk;
         private BlockPos at;
+        private Task hut;
         private static final Set<String> REPLACEABLE = Set.of("air", "cave_air", "void_air", "water", "short_grass", "tall_grass", "fern", "snow");
 
         public Place(String block, BlockPos target) { this.block = block; this.target = target; }
@@ -270,6 +271,8 @@ public final class Tasks {
         }
 
         @Override public Outcome tick(Body b) {
+            // A hut that is down is out of the inventory, and still has its colony to settle.
+            if (hut != null) return hut.tick(b);
             ServerLevel level = level(b);
             int slot = b.slotOf(block);
             if (slot < 0) return Outcome.fail("missing_materials", "no " + block + " in the inventory");
@@ -294,6 +297,11 @@ public final class Tasks {
                 if (!o.ok()) return o;
             }
             if (!replaceable(level, at)) return Outcome.fail("blocked", "target is occupied: name an empty position or mine the block first");
+            // A colony's hut is not placed by a click: its mod opens a window instead, so the body does what the window would.
+            if (Colonies.isHut(Compat.block(block).orElseThrow())) {
+                hut = Colonies.hut(block, at);
+                return hut.tick(b);
+            }
             for (Direction d : Direction.values()) {
                 BlockPos against = at.relative(d);
                 if (level.getBlockState(against).getCollisionShape(level, against).isEmpty()) continue;
@@ -672,10 +680,21 @@ public final class Tasks {
         private final String item;
         private final int count;
         private Walk walk;
+        private Task hut;
 
         public Transfer(Kind kind, BlockPos at, String item, int count) { this.kind = kind; this.at = at; this.item = item; this.count = count; }
 
         @Override public Outcome tick(Body b) {
+            if (hut != null) return hut.tick(b);
+            // A colony's hut opens a window, not a chest: what a player would do in it at first is done for the body.
+            if (kind == Kind.OPEN && Colonies.isHut(level(b).getBlockState(at).getBlock())) {
+                if (walk == null) walk = new Walk(at, 3);
+                Outcome o = walk.tick(b);
+                if (o == null) return null;
+                if (!o.ok()) return o;
+                hut = Colonies.settle(at);
+                return hut.tick(b);
+            }
             if (!Set.of("chest", "trapped_chest", "barrel").contains(Body.name(level(b).getBlockState(at))) || !(level(b).getBlockEntity(at) instanceof Container)) {
                 return Outcome.fail("not_found", "no container at that position");
             }
