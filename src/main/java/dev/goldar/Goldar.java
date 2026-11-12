@@ -9,6 +9,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.level.Level;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -22,7 +23,8 @@ import org.slf4j.LoggerFactory;
 @Mod(Goldar.ID)
 public final class Goldar {
     public static final String ID = "goldar";
-    public static final String VERSION = "0.1.0";
+    /** The version the jar was built as, read from the mod itself. */
+    public static String VERSION = "dev";
     public static final Logger LOGGER = LoggerFactory.getLogger("Goldar");
     private static final String PLAYER_ID = "[a-z][a-z0-9-]{0,30}";
     private static final String NAME = "[A-Za-z0-9_]{3,16}";
@@ -31,7 +33,10 @@ public final class Goldar {
     private static Mcp mcp;
     private static Glass glass;
 
-    public Goldar() { NeoForge.EVENT_BUS.register(this); }
+    public Goldar(ModContainer container) {
+        VERSION = container.getModInfo().getVersion().toString();
+        NeoForge.EVENT_BUS.register(this);
+    }
 
     public static World world() { return world; }
 

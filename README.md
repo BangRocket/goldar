@@ -19,7 +19,9 @@ gradlew runServer
 The first start stops until you accept Minecraft's EULA in `run/eula.txt`. Set `online-mode=false` in
 `run/server.properties` only if people without accounts should be able to join and watch.
 
-For a real server, `gradlew build` and put `build/libs/goldar-<version>.jar` in the server's `mods` folder. The mod also
+For a real server, put `goldar-<version>.jar` in the server's `mods` folder. Get it from the
+[releases](https://github.com/BangRocket/goldar/releases), or build it with `gradlew build` (it lands in `build/libs`).
+Every push is built and tested by GitHub Actions, and pushing a tag such as `v0.2.0` publishes that version as a release. The mod also
 works in a singleplayer world, where it starts with the world.
 
 ## Add a mind
