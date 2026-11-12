@@ -444,6 +444,7 @@ public final class Plan {
             Outcome o = batch.current.tick(b);
             if (o == null) return;
             batch.current = null;
+            if (!o.ok()) Goldar.LOGGER.info("{}: an action failed ({}): {}", mind.seat.id, o.reason(), o.message());
             // The steps after a failed one were planned on its success.
             if (!o.ok()) endBatch(mind, b, tick, false);
             else if (batch.queue.isEmpty()) endBatch(mind, b, tick, true);
@@ -478,6 +479,7 @@ public final class Plan {
             reflexes.blocked = new Reflexes.Blocked(intent.travelGoal, 1, tick, o.message() == null ? "no way there" : o.message());
             return;
         }
+        Goldar.LOGGER.info("{}: the intent {} failed ({}): {}", mind.seat.id, intent.program, o.reason(), o.message());
         failIntent(mind, b, tick, why(o));
     }
 

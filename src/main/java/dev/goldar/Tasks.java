@@ -42,6 +42,25 @@ public final class Tasks {
     }
 
     private static final double REACH = 4.5;
+    private static final Pathfinder.Build DIG = new Pathfinder.Build(0, true);
+
+    /** True when the block has a face open to the air, so what it drops lands where a body can walk. */
+    static boolean exposed(ServerLevel level, BlockPos p) {
+        for (Direction d : Direction.values()) {
+            BlockPos n = p.relative(d);
+            BlockState s = level.getBlockState(n);
+            if (s.getCollisionShape(level, n).isEmpty() && s.getFluidState().isEmpty()) return true;
+        }
+        return false;
+    }
+
+    /** True when nothing solid stands between the body's eyes and the block. */
+    static boolean inSight(Body b, BlockPos p) {
+        Vec3 eyes = b.getEyePosition(), centre = Vec3.atCenterOf(p);
+        var hit = level(b).clip(new net.minecraft.world.level.ClipContext(eyes, centre, net.minecraft.world.level.ClipContext.Block.COLLIDER,
+            net.minecraft.world.level.ClipContext.Fluid.NONE, b));
+        return hit.getType() == net.minecraft.world.phys.HitResult.Type.MISS || hit.getBlockPos().equals(p);
+    }
     private static final int SEARCH = 32;
 
     static ServerLevel level(Body b) { return b.level(); }
@@ -90,15 +109,21 @@ public final class Tasks {
         private static final int STUCK_TICKS = 50;
         private final Function<Body, BlockPos> target;
         private final int range;
+        private final Pathfinder.Build build;
         private List<Pathfinder.Step> path;
         private boolean complete;
         private int index, plans, still;
         private Vec3 last;
         private Dig dig;
 
-        public Walk(Function<Body, BlockPos> target, int range) { this.target = target; this.range = range; }
+        public Walk(Function<Body, BlockPos> target, int range, Pathfinder.Build build) { this.target = target; this.range = range; this.build = build; }
+
+        public Walk(Function<Body, BlockPos> target, int range) { this(target, range, Pathfinder.Build.NONE); }
 
         public Walk(BlockPos target, int range) { this(b -> target, range); }
+
+        /** A walk that may dig its way, as a player tunnels to a block it has no open way to. It never builds. */
+        static Walk digging(BlockPos target, int range) { return new Walk(b -> target, range, DIG); }
 
         private boolean arrived(BlockPos feet, BlockPos goal) {
             if (range == 0) return feet.equals(goal);
@@ -115,7 +140,7 @@ public final class Tasks {
             if (path == null || index >= path.size()) {
                 if (path != null && complete) { b.halt(); return Outcome.OK; }
                 if (++plans > MAX_PLANS) { b.halt(); return Outcome.fail("blocked", "no way there"); }
-                var found = new Pathfinder(new LevelTerrain(level(b), b), Pathfinder.Build.NONE)
+                var found = new Pathfinder(new LevelTerrain(level(b), b), build)
                     .find(feet, p -> arrived(p, goal), p -> Math.sqrt(p.distSqr(goal)));
                 if (found.path().isEmpty()) { b.halt(); return Outcome.fail("blocked", "no way there"); }
                 path = found.path();
@@ -167,6 +192,11 @@ public final class Tasks {
         private int pickup;
         private BlockPos broken, dropAt;
         private int had = -1;
+        /** Whether the way to the block, or to what it dropped, is being dug. */
+        private boolean digging;
+        /** Blocks given up in a row; past MAX_SKIPS the mining ends. */
+        private int skipped;
+        private static final int MAX_SKIPS = 8;
 
         /** Mines `count` blocks. With `item` and `goal`, stops as soon as the inventory holds that many. */
         public Mine(String block, int count, int radius, String item, int goal) {
@@ -197,9 +227,17 @@ public final class Tasks {
                 if (drop == null) return null;
                 if (walk == null || !drop.blockPosition().equals(dropAt)) {
                     dropAt = drop.blockPosition();
-                    walk = new Walk(dropAt, 0);
+                    walk = digging ? Walk.digging(dropAt, 0) : new Walk(dropAt, 0);
                 }
-                if (walk.tick(b) != null) b.steer(drop.position(), false);
+                Outcome o = walk.tick(b);
+                if (o != null && !o.ok() && !digging) {
+                    // The drop fell where no open way leads: dig to it, as a player would, and give that time.
+                    digging = true;
+                    walk = Walk.digging(dropAt, 0);
+                    pickup = Math.max(pickup, PICKUP_TICKS * 4);
+                } else if (o != null) {
+                    b.steer(drop.position(), false);
+                }
                 return null;
             }
             if (done(b)) { b.halt(); return Outcome.OK; }
@@ -207,35 +245,61 @@ public final class Tasks {
                 if (Compat.block(block).isEmpty()) {
                     return Outcome.fail("invalid_args", "unknown block " + block);
                 }
-                Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius,
-                    p -> !tried.contains(p) && Body.name(level.getBlockState(p)).equals(block));
+                if (skipped > MAX_SKIPS) return Outcome.fail("not_found", "no " + block + " within " + radius + " that could be reached");
+                BlockPos under = b.blockPosition().below();
+                java.util.function.Predicate<BlockPos> match = p -> !tried.contains(p) && !p.equals(under) && Body.name(level.getBlockState(p)).equals(block);
+                // A block open to the air comes first; a buried one is reached by digging a way to it.
+                Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius, p -> match.test(p) && exposed(level, p));
+                if (found.isEmpty()) found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius, match);
                 if (found.isEmpty()) return Outcome.fail("not_found", "no " + block + " within " + radius);
                 at = found.get().immutable();
                 tried.add(at);
-                // Breaking the block underfoot would drop the body.
-                if (at.equals(b.blockPosition().below())) return Outcome.fail("not_possible", "would drop the body");
                 if (item != null) had = b.count(item);
                 BlockState s = level.getBlockState(at);
                 if (!b.holdToolFor(s)) return Outcome.fail("missing_materials", block + " needs a better tool");
-                walk = b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) <= REACH ? null : new Walk(at, 3);
+                digging = !exposed(level, at);
+                boolean near = b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) <= REACH && inSight(b, at);
+                walk = near ? null : digging ? Walk.digging(at, 1) : new Walk(at, 3);
                 dig = new Dig(at);
             }
             if (walk != null) {
                 Outcome o = walk.tick(b);
                 if (o == null) return null;
                 walk = null;
-                if (!o.ok()) return o;
-                if (b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) > REACH + 1) return Outcome.fail("out_of_reach", "could not get near the " + block);
-                if (at.equals(b.blockPosition().below())) return Outcome.fail("not_possible", "would drop the body");
+                if (!o.ok() && !digging) {
+                    // No open way to it: dig one.
+                    digging = true;
+                    walk = Walk.digging(at, 1);
+                    return null;
+                }
+                if (!o.ok()) return skip();
+            }
+            // A block is broken only where the body can see it, so what it drops lands where the body can follow.
+            if (at.equals(b.blockPosition().below())) return skip();
+            if (b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) > REACH || !inSight(b, at)) {
+                if (digging) return skip();
+                digging = true;
+                walk = Walk.digging(at, 1);
+                return null;
             }
             Boolean open = dig.tick(b);
             if (open == null) return null;
             broken = at;
             at = null;
+            skipped = 0;
             if (!open) return null;
             left--;
-            pickup = PICKUP_TICKS;
+            pickup = digging ? PICKUP_TICKS * 2 : PICKUP_TICKS;
             walk = null;
+            return null;
+        }
+
+        /** Leaves a block that could not be got at and looks for the next. */
+        private Outcome skip() {
+            at = null;
+            walk = null;
+            digging = false;
+            skipped++;
             return null;
         }
     }
