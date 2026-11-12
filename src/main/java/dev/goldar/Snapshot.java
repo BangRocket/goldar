@@ -201,7 +201,7 @@ public final class Snapshot {
 
         JsonObject self = new JsonObject();
         JsonObject position = J.obj("x", feet.getX(), "y", feet.getY(), "z", feet.getZ());
-        String biome = level.getBiome(feet).unwrapKey().map(k -> k.identifier().getPath()).orElse("");
+        String biome = Compat.biome(level, feet);
         if (KIND.matcher(biome).matches()) position.addProperty("biome", biome);
         self.add("position", position);
         self.addProperty("health", (double) Math.min(20f, b.getHealth()));
@@ -212,7 +212,7 @@ public final class Snapshot {
         self.add("held_item", held.isEmpty() ? JsonNull.INSTANCE : new JsonPrimitive(Body.name(held)));
         // One entry for each stack: the pack first, then the hotbar.
         JsonArray inventory = new JsonArray();
-        var items = b.getInventory().getNonEquipmentItems();
+        var items = Compat.items(b.getInventory());
         for (int k = 0; k < items.size(); k++) {
             int i = k < items.size() - 9 ? k + 9 : k - (items.size() - 9);
             if (!items.get(i).isEmpty()) inventory.add(J.obj("item", Body.name(items.get(i)), "count", items.get(i).getCount()));
@@ -260,7 +260,7 @@ public final class Snapshot {
             if (exact > ENTITY_RANGE || !canSee(b, e.position().add(0, e.getBbHeight() / 2, 0))) continue;
             double dist = Math.round(exact * 10) / 10.0;
             if (e instanceof Player p) {
-                String name = p.getGameProfile().name();
+                String name = Compat.name(p.getGameProfile());
                 if (name.isEmpty() || name.length() > 32) continue;
                 String theirs = p.getMainHandItem().isEmpty() ? null : Body.name(p.getMainHandItem());
                 JsonObject a = J.obj("name", name, "distance", dist);

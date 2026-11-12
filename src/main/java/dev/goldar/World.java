@@ -290,7 +290,7 @@ public final class World {
         long now = System.currentTimeMillis();
         if (now - b.mind.lastSpokeMs < config.say_min_seconds * 1000) return "rate_limited";
         b.mind.lastSpokeMs = now;
-        heard(b, b.getGameProfile().name(), line, true);
+        heard(b, Compat.name(b.getGameProfile()), line, true);
         return "said";
     }
 
@@ -318,7 +318,7 @@ public final class World {
     public void onChat(ServerPlayer player, String text) {
         if (player instanceof Body) return;
         String line = Voice.clean(text, Voice.MAX_LINE_CHARS);
-        if (!line.isEmpty()) heard(player, player.getGameProfile().name(), line, false);
+        if (!line.isEmpty()) heard(player, Compat.name(player.getGameProfile()), line, false);
     }
 
     // ---- tools ----

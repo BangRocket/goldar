@@ -10,9 +10,8 @@ import java.util.Map;
 import java.util.Optional;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.world.inventory.AbstractCraftingMenu;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.AbstractFurnaceMenu;
-import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.crafting.CraftingInput;
@@ -51,10 +50,9 @@ public final class Crafting {
     private static Map<String, List<Grid>> byResult;
 
     private static Grid grid(RecipeHolder<?> holder) {
-        if (holder.value() instanceof ShapedRecipe shaped) return new Grid(holder, shaped, shaped.getWidth(), shaped.getHeight(), shaped.getIngredients());
+        if (holder.value() instanceof ShapedRecipe shaped) return new Grid(holder, shaped, shaped.getWidth(), shaped.getHeight(), Compat.cells(shaped));
         if (holder.value() instanceof ShapelessRecipe shapeless) {
-            List<Optional<Ingredient>> cells = new ArrayList<>();
-            for (Ingredient i : shapeless.placementInfo().ingredients()) cells.add(Optional.of(i));
+            List<Optional<Ingredient>> cells = new ArrayList<>(Compat.cells(shapeless));
             if (cells.size() > 9) return null;
             while (cells.size() < 9) cells.add(Optional.empty());
             return new Grid(holder, shapeless, 3, 3, cells);
@@ -72,11 +70,11 @@ public final class Crafting {
             try {
                 List<ItemStack> ideal = new ArrayList<>();
                 for (Optional<Ingredient> cell : g.cells) {
-                    ideal.add(cell.flatMap(i -> i.items().findFirst()).map(h -> new ItemStack(h.value())).orElse(ItemStack.EMPTY));
+                    ideal.add(cell.flatMap(Compat::first).orElse(ItemStack.EMPTY));
                 }
                 CraftingInput input = g.input(ideal);
                 if (!g.recipe.matches(input, level)) continue;
-                ItemStack made = g.recipe.assemble(input);
+                ItemStack made = Compat.assemble(g.recipe, input, level);
                 if (!made.isEmpty()) map.computeIfAbsent(Body.name(made), k -> new ArrayList<>()).add(g);
             } catch (RuntimeException e) {
                 // A recipe that can't be assembled outside a real grid is left out.
@@ -91,7 +89,7 @@ public final class Crafting {
         List<String> out = new ArrayList<>();
         var book = b.getRecipeBook();
         recipes(Tasks.level(b)).forEach((item, grids) -> {
-            for (Grid g : grids) if (book.contains(g.holder.id())) { out.add(item); break; }
+            for (Grid g : grids) if (Compat.knows(b, g.holder)) { out.add(item); break; }
         });
         java.util.Collections.sort(out);
         return out.size() > 1500 ? out.subList(0, 1500) : out;
@@ -101,7 +99,7 @@ public final class Crafting {
     public static void reset() { byResult = null; }
 
     private static String firstName(Ingredient i) {
-        return i.items().findFirst().map(h -> Body.name(new ItemStack(h.value()))).orElse("an ingredient");
+        return Compat.first(i).map(Body::name).orElse("an ingredient");
     }
 
     /** Crafts or smelts `count` of an item. */
@@ -117,7 +115,7 @@ public final class Crafting {
         /** Makes the recipe once by laying it out on the open grid. Returns null on success, else what is missing. */
         private String once(Body b, Grid g) {
             // Check first that the inventory covers every cell, so a grid is never left half laid.
-            var items = b.getInventory().getNonEquipmentItems();
+            var items = Compat.items(b.getInventory());
             int[] left = new int[items.size()];
             for (int i = 0; i < left.length; i++) left[i] = items.get(i).getCount();
             for (Optional<Ingredient> cell : g.cells) {
@@ -127,27 +125,27 @@ public final class Crafting {
                 if (slot < 0) return firstName(cell.get());
                 left[slot]--;
             }
-            AbstractCraftingMenu menu = (AbstractCraftingMenu) b.containerMenu;
-            List<Slot> grid = menu.getInputGridSlots();
+            AbstractContainerMenu menu = b.containerMenu;
+            List<Slot> grid = Compat.grid(menu);
             boolean shaped = g.recipe instanceof ShapedRecipe;
             int placed = 0;
             String lack = null;
             for (int c = 0; c < g.cells.size() && lack == null; c++) {
                 if (g.cells.get(c).isEmpty()) continue;
                 Ingredient wanted = g.cells.get(c).get();
-                Slot cell = grid.get(shaped ? (c / g.width) * menu.getGridWidth() + c % g.width : placed);
+                Slot cell = grid.get(shaped ? (c / g.width) * Compat.gridWidth(menu) + c % g.width : placed);
                 placed++;
                 if (Menus.move(b, s -> Menus.own(b, s), s -> s == cell, wanted::test, 1) < 1) lack = firstName(wanted);
             }
-            Slot result = menu.getResultSlot();
+            Slot result = Compat.result(menu);
             if (lack == null && (!result.hasItem() || !Body.name(result.getItem()).equals(item))) lack = "the right ingredients";
             if (lack == null) {
                 int before = b.count(item);
-                Menus.click(b, result.index, 0, ContainerInput.QUICK_MOVE);
+                Menus.click(b, result.index, 0, true);
                 if (b.count(item) > before) made += b.count(item) - before; else lack = "room in the inventory";
             }
             // What the recipe left on the grid (an empty bucket, or everything after a failure) goes back.
-            for (Slot cell : grid) if (cell.hasItem()) Menus.click(b, cell.index, 0, ContainerInput.QUICK_MOVE);
+            for (Slot cell : grid) if (cell.hasItem()) Menus.click(b, cell.index, 0, true);
             return lack;
         }
 
@@ -162,7 +160,7 @@ public final class Crafting {
             }
             List<Grid> all = recipes(level).getOrDefault(item, List.of());
             List<Grid> known = new ArrayList<>();
-            for (Grid g : all) if (!Goldar.world().config.require_unlocked_recipes || b.getRecipeBook().contains(g.holder.id())) known.add(g);
+            for (Grid g : all) if (!Goldar.world().config.require_unlocked_recipes || Compat.knows(b, g.holder)) known.add(g);
             String missing = null;
             boolean wantsTable = false;
             BlockPos table = nearest(b, "crafting_table");
@@ -173,7 +171,7 @@ public final class Crafting {
                     boolean progressed = false;
                     for (Grid g : known) {
                         if (g.needsTable() && !atTable) {
-                            atTable = inReach && Menus.open(b, table) instanceof AbstractCraftingMenu;
+                            atTable = inReach && Compat.isCrafting(Menus.open(b, table));
                             if (!atTable) { wantsTable = true; continue; }
                         }
                         String lack = once(b, g);
@@ -222,13 +220,13 @@ public final class Crafting {
         /** The inventory slot whose stack smelts into `item`, or null when nothing held does. */
         static Integer recipeFor(Body b, String item) {
             ServerLevel level = Tasks.level(b);
-            var items = b.getInventory().getNonEquipmentItems();
+            var items = Compat.items(b.getInventory());
             for (int i = 0; i < items.size(); i++) {
                 ItemStack s = items.get(i);
                 if (s.isEmpty()) continue;
                 SingleRecipeInput input = new SingleRecipeInput(s);
                 for (RecipeHolder<?> h : level.getServer().getRecipeManager().getRecipes()) {
-                    if (h.value() instanceof SmeltingRecipe r && r.matches(input, level) && Body.name(r.assemble(input)).equals(item)) return i;
+                    if (h.value() instanceof SmeltingRecipe r && r.matches(input, level) && Body.name(Compat.assemble(r, input, level)).equals(item)) return i;
                 }
             }
             return null;
@@ -252,7 +250,7 @@ public final class Crafting {
             if (!loaded) {
                 Integer slot = recipeFor(b, item);
                 if (slot == null) return Outcome.fail("missing_materials", "nothing to smelt into " + item);
-                var items = b.getInventory().getNonEquipmentItems();
+                var items = Compat.items(b.getInventory());
                 ItemStack input = items.get(slot);
                 if (input.getCount() < count) return Outcome.fail("missing_materials", "missing " + Body.name(input));
                 if (!(Menus.open(b, at) instanceof AbstractFurnaceMenu menu)) { Menus.close(b); return Outcome.fail("missing_station", "the furnace would not open"); }
@@ -265,12 +263,12 @@ public final class Crafting {
                         int fuelSlot = -1;
                         for (String preferred : new String[] {"coal", "charcoal"}) if (fuelSlot < 0) fuelSlot = b.slotOf(preferred);
                         for (int i = 0; i < items.size() && fuelSlot < 0; i++) {
-                            if (i != slot && !items.get(i).isEmpty() && level.fuelValues().isFuel(items.get(i)) && !items.get(i).isDamageableItem()) fuelSlot = i;
+                            if (i != slot && !items.get(i).isEmpty() && Compat.isFuel(level, items.get(i)) && !items.get(i).isDamageableItem()) fuelSlot = i;
                         }
                         if (fuelSlot < 0) return Outcome.fail("missing_materials", "missing fuel");
                         ItemStack fuel = items.get(fuelSlot);
                         String fuelName = Body.name(fuel);
-                        int need = (int) Math.ceil(count * (double) SMELT_TICKS / Math.max(1, level.fuelValues().burnDuration(fuel)));
+                        int need = (int) Math.ceil(count * (double) SMELT_TICKS / Math.max(1, Compat.burnTicks(level, fuel)));
                         if (b.count(fuelName) < need) return Outcome.fail("missing_materials", "missing fuel: " + need + " " + fuelName + " needed");
                         Menus.move(b, s -> Menus.own(b, s), s -> s == fuelIn, x -> Body.name(x).equals(fuelName), need);
                     }
@@ -288,7 +286,7 @@ public final class Crafting {
             if (!ready && ++ticks < count * SMELT_TICKS + 200) return null;
             int held = b.count(item);
             if (Menus.open(b, at) instanceof AbstractFurnaceMenu menu && menu.getSlot(AbstractFurnaceMenu.RESULT_SLOT).hasItem()) {
-                Menus.click(b, AbstractFurnaceMenu.RESULT_SLOT, 0, ContainerInput.QUICK_MOVE);
+                Menus.click(b, AbstractFurnaceMenu.RESULT_SLOT, 0, true);
             }
             Menus.close(b);
             int take = b.count(item) - held;

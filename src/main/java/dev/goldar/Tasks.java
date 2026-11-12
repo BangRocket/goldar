@@ -204,7 +204,7 @@ public final class Tasks {
             }
             if (done(b)) { b.halt(); return Outcome.OK; }
             if (at == null) {
-                if (!BuiltInRegistries.BLOCK.containsKey(net.minecraft.resources.Identifier.withDefaultNamespace(block))) {
+                if (Compat.block(block).isEmpty()) {
                     return Outcome.fail("invalid_args", "unknown block " + block);
                 }
                 Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius,
@@ -274,8 +274,8 @@ public final class Tasks {
             int slot = b.slotOf(block);
             if (slot < 0) return Outcome.fail("missing_materials", "no " + block + " in the inventory");
             if (at == null) {
-                var placed = BuiltInRegistries.BLOCK.getOptional(net.minecraft.resources.Identifier.withDefaultNamespace(block));
-                if (placed.isEmpty() || !(b.getInventory().getNonEquipmentItems().get(slot).getItem() instanceof net.minecraft.world.item.BlockItem)) {
+                var placed = Compat.block(block);
+                if (placed.isEmpty() || !(Compat.items(b.getInventory()).get(slot).getItem() instanceof net.minecraft.world.item.BlockItem)) {
                     return Outcome.fail("not_possible", block + " is not a block");
                 }
                 at = target != null ? target : b.blockPosition();
@@ -298,7 +298,7 @@ public final class Tasks {
                 BlockPos against = at.relative(d);
                 if (level.getBlockState(against).getCollisionShape(level, against).isEmpty()) continue;
                 b.hold(slot);
-                Vec3 hit = Vec3.atCenterOf(against).add(Vec3.atLowerCornerOf(d.getOpposite().getUnitVec3i()).scale(0.5));
+                Vec3 hit = Vec3.atCenterOf(against).add(Compat.unit(d.getOpposite()).scale(0.5));
                 b.lookAt(hit);
                 var result = b.gameMode.useItemOn(b, level, b.getMainHandItem(), InteractionHand.MAIN_HAND, new BlockHitResult(hit, d.getOpposite(), against, false));
                 b.halt();
@@ -345,7 +345,7 @@ public final class Tasks {
                 double best = Double.MAX_VALUE;
                 for (Entity e : level(b).getEntities(b, b.getBoundingBox().inflate(24), x -> x instanceof LivingEntity l && l.isAlive())) {
                     String type = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
-                    boolean named = e instanceof Player p && p.getGameProfile().name().equals(target);
+                    boolean named = e instanceof Player p && Compat.name(p.getGameProfile()).equals(target);
                     if (!named && !type.equals(target)) continue;
                     double d = e.distanceToSqr(b);
                     if (d < best) { best = d; victim = (LivingEntity) e; }
@@ -380,7 +380,7 @@ public final class Tasks {
         private int ticks, before, waited = -1;
 
         static int foodSlot(Body b) {
-            var items = b.getInventory().getNonEquipmentItems();
+            var items = Compat.items(b.getInventory());
             int best = -1, bestFood = 0;
             for (int i = 0; i < items.size(); i++) {
                 var food = items.get(i).get(DataComponents.FOOD);
@@ -598,7 +598,7 @@ public final class Tasks {
             if (place == null) {
                 if (lines(text).size() > 4) return Outcome.fail("invalid_args", "the text does not fit on a sign");
                 String sign = null;
-                for (ItemStack s : b.getInventory().getNonEquipmentItems()) if (!s.isEmpty() && s.is(net.minecraft.tags.ItemTags.SIGNS)) { sign = Body.name(s); break; }
+                for (ItemStack s : Compat.items(b.getInventory())) if (!s.isEmpty() && s.is(net.minecraft.tags.ItemTags.SIGNS)) { sign = Body.name(s); break; }
                 if (sign == null) return Outcome.fail("missing_materials", "no sign in the inventory");
                 for (Direction d : Direction.Plane.HORIZONTAL) {
                     BlockPos c = b.blockPosition().relative(d);
@@ -651,7 +651,7 @@ public final class Tasks {
             if (!o.ok()) return o;
             b.lookAt(other.getEyePosition());
             int left = count;
-            var items = b.getInventory().getNonEquipmentItems();
+            var items = Compat.items(b.getInventory());
             for (int i = 0; i < items.size() && left > 0; i++) {
                 ItemStack s = items.get(i);
                 if (s.isEmpty() || !Body.name(s).equals(item)) continue;

@@ -11,13 +11,13 @@ description = "A world where minds connect over MCP and live through server-side
 [[dependencies.goldar]]
 modId = "neoforge"
 type = "required"
-versionRange = "[26.1,26.2)"
+versionRange = "${neoforge_range}"
 ordering = "NONE"
 side = "BOTH"
 
 [[dependencies.goldar]]
 modId = "minecraft"
 type = "required"
-versionRange = "[26.1,26.2)"
+versionRange = "${minecraft_range}"
 ordering = "NONE"
 side = "BOTH"

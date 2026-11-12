@@ -40,7 +40,7 @@ public final class Goldar {
 
     public static World world() { return world; }
 
-    public static long time(Level level) { return level.getDefaultClockTime(); }
+    public static long time(Level level) { return Compat.dayTime(level); }
 
     /** The day of the world, counted from its age: a night slept through does not skip one. */
     public static long day(Level level) { return level.getGameTime() / 24000; }
@@ -97,7 +97,7 @@ public final class Goldar {
     }
 
     @SubscribeEvent public void commands(RegisterCommandsEvent event) {
-        event.getDispatcher().register(Commands.literal("goldar").requires(Commands.hasPermission(Commands.LEVEL_OWNERS))
+        event.getDispatcher().register(Commands.literal("goldar").requires(Compat.owners())
             .then(Commands.literal("list").executes(c -> {
                 if (world == null) return reply(c, "Goldar is not running.");
                 StringBuilder sb = new StringBuilder(world.config.players.size() + " player(s) on port " + world.config.port);

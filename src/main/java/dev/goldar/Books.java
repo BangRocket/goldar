@@ -107,7 +107,7 @@ final class Books {
     /** The written book a body would read: the one in its hand, else the first it carries. Null when it has none. */
     static ItemStack held(Body b) {
         if (b.getMainHandItem().is(Items.WRITTEN_BOOK)) return b.getMainHandItem();
-        for (ItemStack s : b.getInventory().getNonEquipmentItems()) if (s.is(Items.WRITTEN_BOOK)) return s;
+        for (ItemStack s : Compat.items(b.getInventory())) if (s.is(Items.WRITTEN_BOOK)) return s;
         return null;
     }
 
@@ -116,7 +116,7 @@ final class Books {
 
     private static void take(Body b, String item) {
         int slot = b.slotOf(item);
-        if (slot >= 0) b.getInventory().getNonEquipmentItems().get(slot).shrink(1);
+        if (slot >= 0) Compat.items(b.getInventory()).get(slot).shrink(1);
     }
 
     /** Uses up the materials and puts the finished book in the inventory. Call only when `canWrite`. */
@@ -133,7 +133,7 @@ final class Books {
             pages.add(Filterable.passThrough(Component.literal(text.substring(i, Math.min(text.length(), i + PAGE_CHARS)))));
         }
         ItemStack book = new ItemStack(Items.WRITTEN_BOOK);
-        book.set(DataComponents.WRITTEN_BOOK_CONTENT, new WrittenBookContent(Filterable.passThrough(title), b.getGameProfile().name(), 0, pages, true));
+        book.set(DataComponents.WRITTEN_BOOK_CONTENT, new WrittenBookContent(Filterable.passThrough(title), Compat.name(b.getGameProfile()), 0, pages, true));
         Read read = read(book);
         if (!b.getInventory().add(book)) b.drop(book, false);
         return read;

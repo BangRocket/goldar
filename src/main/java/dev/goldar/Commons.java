@@ -93,7 +93,7 @@ final class Commons {
         }
     }
 
-    private static BlockPos place(int[] at, Body b) { return at == null ? b.level().getRespawnData().pos() : new BlockPos(at[0], at[1], at[2]); }
+    private static BlockPos place(int[] at, Body b) { return at == null ? Compat.worldSpawn(b.level()) : new BlockPos(at[0], at[1], at[2]); }
 
     BlockPos shrine(Body b) { return place(shrine, b); }
 
@@ -111,7 +111,7 @@ final class Commons {
         Double weight = tariff.get(item);
         if (weight == null || weight <= 0) return "not_accepted";
         if (b.count(item) < count) return "not_held";
-        var items = b.getInventory().getNonEquipmentItems();
+        var items = Compat.items(b.getInventory());
         int left = count, counted = 0;
         for (int i = 0; i < items.size() && left > 0; i++) {
             ItemStack s = items.get(i);

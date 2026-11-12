@@ -5,7 +5,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.inventory.AbstractContainerMenu;
-import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.inventory.Slot;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.BlockHitResult;
@@ -38,8 +37,9 @@ final class Menus {
         }
     }
 
-    static void click(Body b, int slot, int button, ContainerInput how) {
-        b.containerMenu.clicked(slot, button, how, b);
+    /** One click on a slot of the open screen: a plain click, or a shift-click when `quick`. */
+    static void click(Body b, int slot, int button, boolean quick) {
+        Compat.click(b.containerMenu, slot, button, quick, b);
         b.containerMenu.broadcastChanges();
     }
 
@@ -56,7 +56,7 @@ final class Menus {
         for (int s = 0; s < menu.slots.size() && moved < count; s++) {
             Slot src = menu.slots.get(s);
             if (!from.test(src) || !src.hasItem() || !what.test(src.getItem()) || !src.mayPickup(b)) continue;
-            click(b, s, 0, ContainerInput.PICKUP);
+            click(b, s, 0, false);
             for (int d = 0; d < menu.slots.size() && moved < count && !menu.getCarried().isEmpty(); d++) {
                 Slot dst = menu.slots.get(d);
                 ItemStack carried = menu.getCarried();
@@ -65,17 +65,17 @@ final class Menus {
                 if (!there.isEmpty() && (!ItemStack.isSameItemSameComponents(there, carried) || there.getCount() >= dst.getMaxStackSize(there))) continue;
                 int before = carried.getCount();
                 if (before <= count - moved) {
-                    click(b, d, 0, ContainerInput.PICKUP);
+                    click(b, d, 0, false);
                 } else {
                     for (int n = count - moved; n > 0; n--) {
                         int held = menu.getCarried().getCount();
-                        click(b, d, 1, ContainerInput.PICKUP);
+                        click(b, d, 1, false);
                         if (menu.getCarried().getCount() == held) break;
                     }
                 }
                 moved += before - menu.getCarried().getCount();
             }
-            if (!menu.getCarried().isEmpty()) click(b, s, 0, ContainerInput.PICKUP);
+            if (!menu.getCarried().isEmpty()) click(b, s, 0, false);
         }
         return moved;
     }

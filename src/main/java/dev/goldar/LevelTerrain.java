@@ -83,7 +83,7 @@ public final class LevelTerrain implements Terrain {
         if (lavaWithin(p)) return Double.POSITIVE_INFINITY;
         float speed = 1f;
         boolean harvests = !s.requiresCorrectToolForDrops();
-        for (var stack : player.getInventory().getNonEquipmentItems()) {
+        for (var stack : Compat.items(player.getInventory())) {
             if (s.requiresCorrectToolForDrops() && !stack.isCorrectToolForDrops(s)) continue;
             harvests = true;
             speed = Math.max(speed, stack.getDestroySpeed(s));

@@ -314,10 +314,9 @@ final class Reflexes {
             if (hostile == null) return null;
             int health = (int) Math.ceil(b.getHealth());
             String from = type(hostile);
-            var respawn = b.getRespawnConfig();
-            boolean bed = respawn != null && respawn.respawnData().globalPos().dimension() == b.level().dimension()
-                && b.level().getBlockState(respawn.respawnData().pos()).is(BlockTags.BEDS);
-            BlockPos spot = bed ? respawn.respawnData().pos() : b.level().getRespawnData().pos();
+            BlockPos bedAt = Compat.respawnBed(b);
+            boolean bed = bedAt != null;
+            BlockPos spot = bed ? bedAt : Compat.worldSpawn(b.level());
             String kind = bed ? "bed" : "spawn";
             Task walk = Tasks.within(new Tasks.Walk(spot, 2), 400, "timeout", "timeout");
             return new Task() {

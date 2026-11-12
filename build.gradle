@@ -3,13 +3,26 @@ plugins {
     id 'net.neoforged.moddev' version '2.0.148'
 }
 
+// One Minecraft version is built at a time: -Pmc=1.21.1 picks another than the default in gradle.properties.
+// Code that compiles against every version lives in src/; what differs lives in versions/<mc>/src/.
+def mc = project.property('mc')
+def versionDir = file("versions/${mc}")
+if (!versionDir.directory) throw new GradleException("No versions/${mc} folder. Known: ${file('versions').list().sort().join(', ')}")
+def v = new Properties()
+file("${versionDir}/version.properties").withInputStream { v.load(it) }
+
 group = 'dev.goldar'
-version = mod_version
+version = "${mod_version}+mc${mc}"
 base.archivesName = 'goldar'
-java.toolchain.languageVersion = JavaLanguageVersion.of(25)
+java.toolchain.languageVersion = JavaLanguageVersion.of(v.java as int)
+layout.buildDirectory = file("build/${mc}")
+
+sourceSets.main {
+    java.srcDir "${versionDir}/src/main/java"
+}
 
 processResources {
-    def props = [mod_version: project.version]
+    def props = [mod_version: project.version, neoforge_range: v.neoforge_range, minecraft_range: v.minecraft_range]
     inputs.properties props
     filesMatching('META-INF/neoforge.mods.toml') { expand props }
 }
@@ -17,16 +30,16 @@ processResources {
 repositories { mavenCentral() }
 
 neoForge {
-    version = neoforge_version
+    version = v.neoforge_version
     runs {
         server {
             server()
-            gameDirectory = file('run')
+            gameDirectory = file(v.run_dir)
             programArgument '--nogui'
         }
         client {
             client()
-            gameDirectory = file('run')
+            gameDirectory = file(v.run_dir)
         }
     }
     mods {

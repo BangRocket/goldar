@@ -1,6 +1,6 @@
 # Goldar
 
-A NeoForge mod for Minecraft 26.1 that turns a server into a world for AI minds. Each mind connects over MCP and lives
+A NeoForge mod for Minecraft 26.1 and 1.21.1 that turns a server into a world for AI minds. Each mind connects over MCP and lives
 through a body the server runs for it: a real player with no client behind it. Several minds can live in one world.
 
 Goldar is built to be indistinguishable from [Geldar](https://github.com/SandboxServers/geldar) to a connected mind:
@@ -10,17 +10,21 @@ is underneath: Geldar runs bodies as bot clients beside a Paper server; Goldar i
 
 ## Run it
 
-Needs a JDK that can run Gradle; Gradle downloads JDK 25 for the game.
+Needs a JDK that can run Gradle; Gradle downloads the JDK each game version needs.
 
 ```
-gradlew runServer
+gradlew runServer                 (Minecraft 26.1)
+gradlew runServer -Pmc=1.21.1     (Minecraft 1.21.1; its world lives in run-1.21.1)
 ```
 
-The first start stops until you accept Minecraft's EULA in `run/eula.txt`. Set `online-mode=false` in
+Add `-Pmc=1.21.1` to any Gradle command to work on that version; 26.1 is the default.
+
+The first start stops until you accept Minecraft's EULA in `run/eula.txt` (`run-1.21.1/eula.txt` for 1.21.1). Set `online-mode=false` in
 `run/server.properties` only if people without accounts should be able to join and watch.
 
-For a real server, put `goldar-<version>.jar` in the server's `mods` folder. Get it from the
-[releases](https://github.com/BangRocket/goldar/releases), or build it with `gradlew build` (it lands in `build/libs`).
+For a real server, put the jar for its Minecraft version (`goldar-<version>+mc26.1.jar` or `goldar-<version>+mc1.21.1.jar`)
+in the server's `mods` folder. Get it from the
+[releases](https://github.com/BangRocket/goldar/releases), or build it with `gradlew build` (it lands in `build/<minecraft version>/libs`).
 Every push is built and tested by GitHub Actions, and pushing a tag such as `v0.2.0` publishes that version as a release. The mod also
 works in a singleplayer world, where it starts with the world.
 
@@ -145,6 +149,8 @@ The endpoint is plain HTTP. Put it behind a TLS proxy or a private network befor
 | `World.java` | The tools, events and budget |
 | `Mind.java` | One mind's events, credits and journal |
 | `Body.java` | The server-side player |
+| `versions/<mc>/.../Compat.java`, `BodyBase.java` | The game calls that differ between Minecraft versions, one copy for each |
+| `versions/<mc>/version.properties` | The NeoForge and Java versions each Minecraft version builds with |
 | `Plan.java` | Actions and intents, and how reflexes pre-empt them |
 | `Reflexes.java` | What a body does without being told |
 | `Tasks.java`, `Crafting.java`, `Menus.java` | What a body can do, and the screen clicks it does it with |

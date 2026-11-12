@@ -17,22 +17,27 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        mc: ['26.1', '1.21.1']
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
+          # Gradle runs on this one and fetches the JDK each Minecraft version compiles with.
           java-version: 25
 
       - uses: gradle/actions/setup-gradle@v4
 
       # Compiles, runs the tests and makes the jar a server loads.
       - name: Build
-        run: ./gradlew build --no-daemon
+        run: ./gradlew build --no-daemon -Pmc=${{ matrix.mc }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: goldar-jar
-          path: build/libs/goldar-*.jar
+          name: goldar-jar-mc${{ matrix.mc }}
+          path: build/${{ matrix.mc }}/libs/goldar-*.jar
           if-no-files-found: error

@@ -1,58 +1,24 @@
 package dev.goldar;
 
 import com.mojang.authlib.GameProfile;
-import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.embedded.EmbeddedChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.UUID;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.network.PacketListener;
-import net.minecraft.network.ProtocolInfo;
-import net.minecraft.network.protocol.Packet;
-import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.network.CommonListenerCookie;
-import net.minecraft.util.ProblemReporter;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.storage.TagValueInput;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * A mind's body: a real player on the server with no client behind it. The server simulates its movement from the
  * inputs set here, and it eats, falls, burns and dies as any player does.
  */
-public final class Body extends ServerPlayer {
+public final class Body extends BodyBase {
     private static final int CHUNK_SYNC_TICKS = 10;
-
-    /** A connection that goes nowhere: packets for the client that isn't there are dropped. */
-    private static final class NoConnection extends net.minecraft.network.Connection {
-        NoConnection() {
-            super(PacketFlow.SERVERBOUND);
-            // The base class reads its channel in places that can't be overridden; an embedded one is always open.
-            try {
-                var field = net.minecraft.network.Connection.class.getDeclaredField("channel");
-                field.setAccessible(true);
-                field.set(this, new EmbeddedChannel());
-            } catch (ReflectiveOperationException e) {
-                throw new IllegalStateException("Could not prepare a body's connection", e);
-            }
-        }
-
-        @Override public void send(Packet<?> packet, ChannelFutureListener listener, boolean flush) {}
-        @Override public <T extends PacketListener> void setupInboundProtocol(ProtocolInfo<T> protocol, T listener) {}
-        @Override public void setListenerForServerboundHandshake(PacketListener listener) {}
-        @Override public void setReadOnly() {}
-        @Override public void handleDisconnection() {}
-        @Override public void flushChannel() {}
-        @Override public boolean isConnected() { return true; }
-        @Override public boolean isMemoryConnection() { return false; }
-    }
 
     public final Mind mind;
     /** Blocks broken or placed since the body woke: intents are limited by it. */
@@ -63,7 +29,7 @@ public final class Body extends ServerPlayer {
     private boolean jump;
 
     private Body(MinecraftServer server, ServerLevel level, GameProfile profile, Mind mind) {
-        super(server, level, profile, ClientInformation.createDefault());
+        super(server, level, profile);
         this.mind = mind;
     }
 
@@ -73,10 +39,9 @@ public final class Body extends ServerPlayer {
         UUID id = UUID.nameUUIDFromBytes(("Goldar:" + mind.seat.id).getBytes(StandardCharsets.UTF_8));
         ServerLevel level = server.overworld();
         Body body = new Body(server, level, new GameProfile(id, name), mind);
-        var saved = server.getPlayerList().loadPlayerData(body.nameAndId());
-        if (saved.isPresent()) body.load(TagValueInput.create(ProblemReporter.DISCARDING, server.registryAccess(), saved.get()));
-        boolean atSpawn = saved.isEmpty();
-        if (saved.isPresent() && body.isDeadOrDying()) {
+        boolean saved = body.loadSaved(server);
+        boolean atSpawn = !saved;
+        if (saved && body.isDeadOrDying()) {
             atSpawn = true;
             // The body died: it comes back as a respawned player does, keeping what a respawn keeps.
             Body fresh = new Body(server, level, new GameProfile(id, name), mind);
@@ -84,10 +49,10 @@ public final class Body extends ServerPlayer {
             body = fresh;
         }
         if (atSpawn) {
-            BlockPos spawn = body.adjustSpawnLocation(level, level.getRespawnData().pos());
-            body.snapTo(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5, 0, 0);
+            BlockPos spawn = body.adjustSpawnLocation(level, Compat.worldSpawn(level));
+            body.snap(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
         }
-        server.getPlayerList().placeNewPlayer(new NoConnection(), body, CommonListenerCookie.createInitial(body.getGameProfile(), false));
+        server.getPlayerList().placeNewPlayer(noConnection(), body, CommonListenerCookie.createInitial(body.getGameProfile(), false));
         return body;
     }
 
@@ -96,11 +61,8 @@ public final class Body extends ServerPlayer {
         if (!isRemoved()) level().getServer().getPlayerList().remove(this);
     }
 
-    // The server, not a client, moves this player.
-    @Override public boolean isClientAuthoritative() { return false; }
-
     @Override public void tick() {
-        if (tickCount % CHUNK_SYNC_TICKS == 0) level().getChunkSource().move(this);
+        if (tickCount % CHUNK_SYNC_TICKS == 0) syncChunks();
         super.tick();
         zza = forward;
         xxa = 0;
@@ -108,17 +70,14 @@ public final class Body extends ServerPlayer {
         doTick();
     }
 
-    @Override public boolean hurtServer(ServerLevel level, DamageSource source, float damage) {
-        float before = getHealth() + getAbsorptionAmount();
-        boolean hurt = super.hurtServer(level, source, damage);
-        if (hurt) {
+    @Override void struck(float before) {
+        {
             float lost = before - (getHealth() + getAbsorptionAmount());
             if (lost > 0) lastHurtTick = tickCount;
             // Each blow is news, the ones armour took whole among them.
             if (isAlive()) Goldar.world().onHurt(mind, this, lost);
             else Goldar.world().onKilled(mind, lost);
         }
-        return hurt;
     }
 
     @Override public void die(DamageSource source) {
@@ -161,13 +120,13 @@ public final class Body extends ServerPlayer {
 
     public int count(String item) {
         int n = 0;
-        for (ItemStack s : getInventory().getNonEquipmentItems()) if (!s.isEmpty() && name(s).equals(item)) n += s.getCount();
+        for (ItemStack s : Compat.items(getInventory())) if (!s.isEmpty() && name(s).equals(item)) n += s.getCount();
         return n;
     }
 
     /** The first slot holding the item, or -1. */
     public int slotOf(String item) {
-        var items = getInventory().getNonEquipmentItems();
+        var items = Compat.items(getInventory());
         for (int i = 0; i < items.size(); i++) if (!items.get(i).isEmpty() && name(items.get(i)).equals(item)) return i;
         return -1;
     }
@@ -175,9 +134,9 @@ public final class Body extends ServerPlayer {
     /** Puts the stack in `slot` into the main hand by swapping it with the selected hotbar slot. */
     public void hold(int slot) {
         var inv = getInventory();
-        int selected = inv.getSelectedSlot();
+        int selected = Compat.selected(inv);
         if (slot == selected || slot < 0) return;
-        if (slot < 9) { inv.setSelectedSlot(slot); return; }
+        if (slot < 9) { Compat.select(inv, slot); return; }
         ItemStack held = inv.getItem(selected);
         inv.setItem(selected, inv.getItem(slot));
         inv.setItem(slot, held);
@@ -185,7 +144,7 @@ public final class Body extends ServerPlayer {
 
     /** Holds the fastest tool for the block. Returns false when the block needs a tool the body lacks. */
     public boolean holdToolFor(BlockState state) {
-        var items = getInventory().getNonEquipmentItems();
+        var items = Compat.items(getInventory());
         int best = -1;
         float speed = 1f;
         for (int i = 0; i < items.size(); i++) {
