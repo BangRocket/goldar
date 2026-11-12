@@ -5,19 +5,20 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import dev.goldar.Tasks.Task;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -34,31 +35,35 @@ public final class World {
         static Reply refuse(String code, String message) { return new Reply(code + ": " + message, true, 0); }
     }
 
+    /** The largest result a tool may give, in bytes. */
+    public static final int MAX_RESULT_BYTES = 16384;
+    private static final int MAX_INVALID_INPUT_CHARS = 600;
+    private static final int MAX_WAIT_EVENTS = 200, SPEECH_LINES = 40;
     private static final Set<String> TOOLS = Set.of("look", "status", "journal", "say", "act", "wait", "sleep", "read_book", "write_book", "offer", "propose",
         "vote", "define_skill", "use_skill");
+    private static final Set<String> ALL_INTERESTS = Set.of("directly_addressed", "damage", "agent_approached", "proposal", "day_night");
     private static final Reply NOT_AVAILABLE = Reply.refuse("not_available", "This is not available in this world yet.");
     private static final Reply WAKING = Reply.refuse("body_unavailable", "Your body is waking. Try again in a few seconds.");
     private static final Reply UNREACHABLE = Reply.refuse("body_unavailable", "Your body is not reachable right now. Try again soon.");
     private static final long SERVER_WAIT_SECONDS = 15;
-    private static final Pattern NEW_AGENT = Pattern.compile("new_agent_within_(\\d+)");
-    private static final Pattern ITEM = Pattern.compile("[a-z0-9_]{1,64}");
-    /** The wake reason each `wait` interest lets through. */
-    private static final Map<String, String> INTERESTS = Map.of("directly_addressed", "directly_addressed", "damage", "unexpected_damage",
-        "agent_approached", "new_agent_nearby", "proposal", "proposal", "day_night", "day_night");
+    /** A body that wakes with nothing to do tells its mind so after this long without a plan. */
+    private static final long WAKE_GRACE_MS = 45_000;
     /** How a night's digest words each kind of event. */
-    private static final Map<String, String> DIGEST = Map.of("speech_to_me", "Someone spoke to you.", "conversation_digest", "Some talk went on nearby.",
-        "damage", "You took damage.", "agent_approached", "Someone came near you.", "proposal", "A proposal was put forward.", "day_night", "The day turned.",
-        "intent_finished", "A task you set finished.", "reflex", "Your body acted on its own.", "wake", "You wake with nothing underway.");
+    private static final Map<String, String[]> DIGEST = Map.of("speech", new String[] {"speech_to_me", "Someone spoke to you."},
+        "damage", new String[] {"damage", "You took damage."}, "agent_approached", new String[] {"agent_approached", "Someone came near you."},
+        "proposal", new String[] {"proposal", "A proposal was put forward."}, "day_night", new String[] {"day_night", "The day turned."},
+        "intent_finished", new String[] {"intent_finished", "A task you set finished."}, "reflex", new String[] {"reflex", "Your body acted on its own."});
 
     public final MinecraftServer server;
     public final GoldarConfig config;
     final Commons commons;
     Glass glass;
+    /** Each tool's input schema, by tool name. Set by the endpoint when it loads the contract. */
+    volatile Map<String, JsonObject> inputSchemas = Map.of();
     private final Path dir;
     private final Map<String, Mind> minds = new ConcurrentHashMap<>();
     private final Map<String, Long> lastCall = new ConcurrentHashMap<>();
     private final Map<String, String> lastPhase = new HashMap<>();
-    private final Map<String, Set<String>> lastNear = new HashMap<>();
     private final Map<String, String> lastReflex = new HashMap<>();
 
     public World(MinecraftServer server, GoldarConfig config, Path dir) throws IOException {
@@ -71,7 +76,7 @@ public final class World {
     public Mind mind(String id) {
         GoldarConfig.Player seat = config.player(id);
         if (seat == null) return null;
-        return minds.computeIfAbsent(id, k -> new Mind(seat, config.cap_credits, dir.resolve("journal")));
+        return minds.computeIfAbsent(id, k -> new Mind(seat, config.cap_credits, dir));
     }
 
     private <T> T onServer(Callable<T> work) throws Exception {
@@ -84,7 +89,8 @@ public final class World {
         }).get(SERVER_WAIT_SECONDS, TimeUnit.SECONDS);
     }
 
-    long tick() { return server.getTickCount(); }
+    /** The age of the world in ticks: the clock events are stamped with. */
+    long tick() { return server.overworld().getGameTime(); }
 
     long daysSinceSleep(Mind mind, ServerLevel level) {
         long day = Goldar.day(level);
@@ -92,18 +98,32 @@ public final class World {
         return day - (mind.lastSleepDay < 0 ? mind.bornDay : mind.lastSleepDay);
     }
 
+    /** What `geldar://player/self` holds. */
+    JsonObject self(Mind mind) {
+        long born = mind.bornDay < 0 ? Goldar.day(server.overworld()) : mind.bornDay;
+        return J.obj("name", mind.seat.name, "seed", mind.seat.seed == null ? "" : mind.seat.seed, "born_day", born);
+    }
+
     // ---- bodies ----
+
+    private static boolean alive(Body b) { return b != null && !b.isRemoved() && b.isAlive(); }
 
     /** The mind's body, or null after asking the server to wake it. */
     private Body body(Mind mind) {
         Body b = mind.body;
-        if (b != null && !b.isRemoved() && b.isAlive()) return b;
+        if (alive(b)) return b;
+        if (mind.seat.ended) return null;
         if (!mind.waking) {
             mind.waking = true;
             server.execute(() -> {
                 try {
-                    mind.plan.clear(null);
-                    mind.body = Body.wake(server, mind);
+                    if (!alive(mind.body)) {
+                        mind.plan.clear(null);
+                        mind.body = Body.wake(server, mind);
+                        mind.wokeAtMs = System.currentTimeMillis();
+                        mind.wakeTold = false;
+                        if (mind.bornDay < 0) mind.bornDay = Goldar.day(server.overworld());
+                    }
                 } catch (RuntimeException e) {
                     Goldar.LOGGER.error("Could not wake the body of {}", mind.seat.id, e);
                 } finally {
@@ -119,7 +139,7 @@ public final class World {
         long tick = tick();
         for (Mind mind : minds.values()) {
             Body b = mind.body;
-            if (b == null || b.isRemoved() || !b.isAlive()) continue;
+            if (!alive(b)) continue;
             long idle = System.currentTimeMillis() - lastCall.getOrDefault(mind.seat.id, 0L);
             if (config.hibernate_minutes > 0 && idle > config.hibernate_minutes * 60_000L) {
                 mind.plan.clear(b);
@@ -131,16 +151,22 @@ public final class World {
                 mind.plan.tick(mind, b, tick);
             } catch (RuntimeException e) {
                 Goldar.LOGGER.error("The body of {} failed a tick; its plan is dropped", mind.seat.id, e);
+                boolean had = !mind.plan.idle();
                 mind.plan.clear(b);
-                mind.emit(tick, "action_failed", "Your body could not carry on with what it was doing.", null);
+                if (had) mind.intentFinished(tick, "failed", null);
             }
-            if (tick % 20 == 0) notice(mind, b, tick);
+            if (!mind.wakeTold) {
+                if (!mind.plan.idle()) mind.wakeTold = true;
+                else if (System.currentTimeMillis() - mind.wokeAtMs > WAKE_GRACE_MS) { mind.wakeTold = true; mind.simple(tick, "wake"); }
+            }
+            if (tick % 20 == 0 && config.day_night_events) notice(mind, b, tick);
         }
         if (tick % 20 == 0) {
             ServerLevel level = server.overworld();
             if (Snapshot.timeOfDay(Goldar.time(level)).equals("dawn")) commons.dawn(this, Goldar.day(level));
             if (glass != null) glass.agents = agents();
         }
+        if (tick % 1200 == 0) for (Mind mind : minds.values()) mind.save();
     }
 
     /** What the Glass shows of each player. Server thread only. */
@@ -149,7 +175,7 @@ public final class World {
         for (GoldarConfig.Player seat : config.players) {
             Mind mind = minds.get(seat.id);
             Body b = mind == null ? null : mind.body;
-            boolean awake = b != null && !b.isRemoved() && b.isAlive();
+            boolean awake = alive(b);
             JsonObject a = J.obj("agent_id", seat.id.replace('-', '_'), "name", seat.name, "ended", seat.ended, "awake", awake);
             if (mind != null && mind.bornDay >= 0) a.addProperty("born_day", mind.bornDay);
             if (awake) {
@@ -176,46 +202,31 @@ public final class World {
         }
     }
 
-    /** The reason an event of this kind may end a wait, given what the running intent asked to be woken by. */
-    private static String wakeFor(Mind mind, String kind) {
-        Set<String> on = mind.plan.wakeOn();
-        return switch (kind) {
-            case "speech" -> on == null || on.contains("directly_addressed") ? "directly_addressed" : null;
-            case "damage" -> on == null || on.contains("unexpected_damage") ? "unexpected_damage" : null;
-            default -> on == null ? kind : null;
-        };
-    }
-
-    /** Once a second: dusk, dawn, and anyone the intent asked to be told about coming near. */
+    /** Once a second: dusk and dawn. */
     private void notice(Mind mind, Body b, long tick) {
         String phase = Snapshot.timeOfDay(Goldar.time(b.level()));
         String before = lastPhase.put(mind.seat.id, phase);
-        if (before != null && !before.equals(phase) && (phase.equals("dusk") || phase.equals("dawn"))) {
-            mind.emit(tick, "day_night", phase.equals("dusk") ? "Dusk." : "Dawn.", wakeFor(mind, "day_night"));
-        }
-        int within = 0;
-        Set<String> on = mind.plan.wakeOn();
-        if (on != null) {
-            for (String w : on) {
-                Matcher m = NEW_AGENT.matcher(w);
-                if (m.matches()) within = Math.max(within, Integer.parseInt(m.group(1)));
-            }
-        }
-        if (within == 0) { lastNear.remove(mind.seat.id); return; }
-        Set<String> near = new HashSet<>();
-        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-            if (p != b && p.level() == b.level() && !p.isSpectator() && p.distanceTo(b) <= within) near.add(p.getGameProfile().name());
-        }
-        Set<String> old = lastNear.put(mind.seat.id, near);
-        if (old != null) for (String name : near) if (!old.contains(name)) mind.emit(tick, "agent_approached", "Someone came within " + within + " blocks.", "new_agent_nearby");
+        if (before != null && !before.equals(phase) && (phase.equals("dusk") || phase.equals("dawn"))) mind.dayNight(tick, phase);
     }
 
-    private static String amount(float damage) {
-        return damage == Math.rint(damage) ? String.valueOf((int) damage) : String.valueOf(Math.round(damage * 10) / 10.0);
+    /** A number as the world writes it into an event: whole when it is whole. */
+    static String amount(float damage) {
+        if (damage == Math.rint(damage)) return String.valueOf((long) damage);
+        return Float.toString(damage);
     }
 
-    void onHurt(Mind mind, DamageSource source, float damage) {
-        mind.emit(tick(), "damage", "You took " + amount(damage) + " damage.", wakeFor(mind, "damage"));
+    /** The body took a blow. An intent that asked to be woken by harm ends there. */
+    void onHurt(Mind mind, Body b, float damage) {
+        long tick = tick();
+        mind.damage(tick, amount(Math.max(0, damage)));
+        if (mind.plan.interrupt(mind, b, tick, "unexpected_damage")) mind.damage(tick, "0");
+    }
+
+    /** The blow that killed: the harm it did, then the death itself, which the world words as harm of no size. */
+    void onKilled(Mind mind, float damage) {
+        long tick = tick();
+        mind.damage(tick, amount(Math.max(0, damage)));
+        mind.damage(tick, "0");
     }
 
     void onReflex(Mind mind, Reflexes.Fired fired) {
@@ -228,16 +239,30 @@ public final class World {
         }
     }
 
-    /** A body died. It comes back at the spawn on the next call, unless this world ends a life at its first death. */
+    /**
+     * A body died. It comes back at once as a player does, without what it carried, and goes on with what it was
+     * doing; unless this world ends a life at its first death.
+     */
     void onDeath(Mind mind, String how) {
         Goldar.LOGGER.info("{} died: {}", mind.seat.id, how);
-        mind.plan.clear(null);
-        Body b = mind.body;
-        mind.body = null;
-        if (config.permadeath) mind.seat.ended = true;
+        Body dead = mind.body;
+        if (config.permadeath) {
+            mind.seat.ended = true;
+            mind.plan.clear(null);
+            mind.body = null;
+        }
+        mind.waking = true;
         server.execute(() -> {
-            if (config.permadeath) try { config.save(); } catch (IOException e) { Goldar.LOGGER.error("Could not save the config", e); }
-            if (b != null) b.rest();
+            try {
+                if (config.permadeath) try { config.save(); } catch (IOException e) { Goldar.LOGGER.error("Could not save the config", e); }
+                if (dead != null) dead.rest();
+                if (!config.permadeath) mind.body = Body.wake(server, mind);
+            } catch (RuntimeException e) {
+                Goldar.LOGGER.error("Could not bring back the body of {}", mind.seat.id, e);
+                mind.body = null;
+            } finally {
+                mind.waking = false;
+            }
         });
     }
 
@@ -247,8 +272,53 @@ public final class World {
             Body b = mind.body;
             if (b != null && !b.isRemoved()) { mind.plan.clear(b); b.rest(); }
             mind.body = null;
+            mind.save();
         }
         commons.save();
+    }
+
+    // ---- speech ----
+
+    /**
+     * The body's voice. The line is cleaned first; nothing is said when it is empty, when it is a command, or when
+     * the body spoke too recently. Returns "said" or why not. Server thread only.
+     */
+    String voice(Body b, String text) {
+        String line = Voice.clean(text, Voice.MAX_LINE_CHARS);
+        if (line.isEmpty()) return "empty";
+        if (line.startsWith("/")) return "command";
+        long now = System.currentTimeMillis();
+        if (now - b.mind.lastSpokeMs < config.say_min_seconds * 1000) return "rate_limited";
+        b.mind.lastSpokeMs = now;
+        heard(b, b.getGameProfile().name(), line, true);
+        return "said";
+    }
+
+    /**
+     * Everyone within earshot hears the line. A mind is spoken to when the line calls it by name; other minds only
+     * overhear. Server thread only.
+     */
+    void heard(ServerPlayer speaker, String from, String line, boolean tellPeople) {
+        long tick = tick();
+        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
+            if (p == speaker || p.level() != speaker.level() || p.distanceTo(speaker) > config.chat_radius) continue;
+            if (p instanceof Body other) {
+                Mind mind = other.mind;
+                mind.hear(from, line, tick);
+                boolean addressed = Voice.addressed(line, mind.seat.name);
+                mind.speech(tick, from, line, addressed);
+                if (addressed) mind.plan.interrupt(mind, other, tick, "directly_addressed");
+            } else if (tellPeople) {
+                p.sendSystemMessage(Component.literal("<" + from + "> " + line));
+            }
+        }
+    }
+
+    /** A person typed in chat: the bodies near them hear it as they hear each other. Server thread only. */
+    public void onChat(ServerPlayer player, String text) {
+        if (player instanceof Body) return;
+        String line = Voice.clean(text, Voice.MAX_LINE_CHARS);
+        if (!line.isEmpty()) heard(player, player.getGameProfile().name(), line, false);
     }
 
     // ---- tools ----
@@ -266,7 +336,8 @@ public final class World {
     public Reply call(Mind mind, String tool, JsonObject args) throws Exception {
         lastCall.put(mind.seat.id, System.currentTimeMillis());
         Reply reply = answer(mind, tool, args);
-        if (glass != null && !tool.equals("look") && !tool.equals("status") && !tool.equals("wait")) {
+        if (!reply.error() && reply.text().getBytes(StandardCharsets.UTF_8).length > MAX_RESULT_BYTES) reply = new Reply("result_too_large: " + tool, true, reply.charged());
+        if (glass != null && TOOLS.contains(tool) && !tool.equals("look") && !tool.equals("status") && !tool.equals("wait")) {
             String reasoning = args.has("reasoning") && args.get("reasoning").isJsonPrimitive() ? args.get("reasoning").getAsString()
                 : args.has("text") && args.get("text").isJsonPrimitive() ? args.get("text").getAsString() : null;
             String outcome = reply.error() ? reply.text().split(":", 2)[0] : "ok";
@@ -276,19 +347,40 @@ public final class World {
         return reply;
     }
 
+    /** The faults in a tool's arguments, in Geldar's words: the schema's, or else the tool's either/or rule. */
+    private List<String> faults(String tool, JsonObject args) {
+        JsonObject schema = inputSchemas.get(tool);
+        List<String> errors = schema == null ? List.of() : Schema.check(schema, args);
+        if (!errors.isEmpty()) return errors;
+        if (tool.equals("act")) {
+            boolean hasBody = args.has("intent") || args.has("actions") || args.has("say") && args.get("say").isJsonPrimitive();
+            if (!hasBody) return List.of("\"\" must have at least one of intent, actions or say");
+        }
+        if (tool.equals("write_book") && args.has("skill_id") == args.has("text")) return List.of("\"\" must have exactly one of skill_id or text");
+        return List.of();
+    }
+
     private Reply answer(Mind mind, String tool, JsonObject args) throws Exception {
         if (!TOOLS.contains(tool)) return new Reply("unknown_tool: " + tool, true, 0);
+        List<String> faults = faults(tool, args);
+        if (!faults.isEmpty()) {
+            String text = "invalid_input: " + String.join("; ", faults);
+            return new Reply(text.length() > MAX_INVALID_INPUT_CHARS ? text.substring(0, MAX_INVALID_INPUT_CHARS) : text, true, 0);
+        }
         if (!open(tool)) return NOT_AVAILABLE;
         if (mind.seat.ended) return Reply.refuse("life_ended", "This life has ended.");
+        switch (tool) {
+            case "journal": return journal(mind, args);
+            case "say": return say(mind, args);
+            case "act": return act(mind, args);
+            case "wait": return await(mind, args);
+            default: break;
+        }
         Body b = body(mind);
-        if (b == null) return tool.equals("act") || tool.equals("say") ? UNREACHABLE : WAKING;
+        if (b == null) return WAKING;
         return switch (tool) {
-            case "look" -> Reply.ok(onServer(() -> Snapshot.of(this, mind, b)));
+            case "look" -> look(mind, b);
             case "status" -> status(mind, b);
-            case "journal" -> journal(mind, args);
-            case "say" -> say(mind, b, args);
-            case "act" -> act(mind, b, args);
-            case "wait" -> await(mind, b, args);
             case "sleep" -> sleep(mind, b);
             case "read_book" -> readBook(b);
             case "write_book" -> writeBook(mind, b, args);
@@ -298,8 +390,6 @@ public final class World {
         };
     }
 
-    private static Reply invalid(String message) { return new Reply("invalid_input: " + message, true, 0); }
-
     private static String text(JsonObject args, String key) {
         return args.has(key) && args.get(key).isJsonPrimitive() ? args.get(key).getAsString() : null;
     }
@@ -308,6 +398,15 @@ public final class World {
         JsonArray a = new JsonArray();
         list.forEach(a::add);
         return a;
+    }
+
+    private Reply look(Mind mind, Body b) throws Exception {
+        Snapshot.View view = onServer(() -> Snapshot.of(this, mind, b));
+        JsonObject out = new JsonObject();
+        out.add("snapshot", view.snapshot());
+        out.add("untrusted_world_text", J.obj("speech", view.speech(), "signs", view.signs()));
+        out.addProperty("note", Snapshot.NOTE);
+        return Reply.ok(out);
     }
 
     private Reply status(Mind mind, Body b) throws Exception {
@@ -325,49 +424,29 @@ public final class World {
     }
 
     private Reply journal(Mind mind, JsonObject args) throws Exception {
-        String text = text(args, "text");
-        if (text == null) return invalid("\"\" must have required property 'text'");
-        if (text.isEmpty()) return invalid("/text must NOT have fewer than 1 characters");
-        if (text.length() > 4096) return invalid("/text must NOT have more than 4096 characters");
         if (!mind.spaced("journal", config.journal_min_seconds)) return Reply.refuse("rate_limited", "Journal lines are spaced. Wait, then write again.");
-        return Reply.ok(J.obj("ok", true, "mirrored_chars", mind.journal(text)));
+        return Reply.ok(J.obj("ok", true, "mirrored_chars", mind.journal(text(args, "text"))));
     }
 
-    /**
-     * Everyone within earshot hears it. A mind is spoken to when it is named, or is the only one there to hear; other
-     * minds only overhear. Server thread only.
-     */
-    private void speak(Body b, String text) {
-        long tick = tick();
-        String from = b.getGameProfile().name();
-        List<Body> bodies = new ArrayList<>();
-        for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-            if (p == b || p.level() != b.level() || p.distanceTo(b) > config.chat_radius) continue;
-            if (p instanceof Body other) bodies.add(other);
-            else p.sendSystemMessage(Component.literal("<" + from + "> " + text));
-        }
-        String lower = text.toLowerCase(java.util.Locale.ROOT);
-        for (Body other : bodies) {
-            other.mind.heard.add(new Mind.Heard(from, text, tick));
-            while (other.mind.heard.size() > 40) other.mind.heard.remove(0);
-            boolean addressed = bodies.size() == 1 || lower.contains(other.getGameProfile().name().toLowerCase(java.util.Locale.ROOT));
-            if (addressed) other.mind.emit(tick, "speech_to_me", "Someone spoke to you.", wakeFor(other.mind, "speech"));
-            else other.mind.overheard(tick);
-        }
-    }
-
-    private Reply say(Mind mind, Body b, JsonObject args) throws Exception {
+    private Reply say(Mind mind, JsonObject args) throws Exception {
         String text = text(args, "text");
-        if (text == null) return invalid("\"\" must have required property 'text'");
-        if (text.isEmpty()) return invalid("/text must NOT have fewer than 1 characters");
-        if (text.length() > 256) return invalid("/text must NOT have more than 256 characters");
-        String reason = text.isBlank() ? "empty" : !mind.spaced("say", config.say_min_seconds) ? "rate_limited" : !mind.spend(config, 1) ? "budget_exhausted" : null;
+        String reason = !mind.spaced("say", config.say_min_seconds) ? "rate_limited" : !mind.spend(config, 1) ? "budget_exhausted" : null;
         if (reason == null) {
+            Body b = body(mind);
+            String said;
             try {
-                onServer(() -> { speak(b, text); return null; });
+                if (b == null) throw new IllegalStateException("no body");
+                said = onServer(() -> voice(b, text));
+            } catch (InterruptedException e) {
+                mind.refund(config, 1);
+                throw e;
             } catch (Exception e) {
                 mind.refund(config, 1);
                 return UNREACHABLE;
+            }
+            if (!said.equals("said")) {
+                mind.refund(config, 1);
+                reason = "body_refused";
             }
         }
         JsonObject out = J.obj("spoken", reason == null, "budget_remaining_thoughts", mind.credits(config));
@@ -375,39 +454,28 @@ public final class World {
         return Reply.ok(out, reason == null ? 1 : 0);
     }
 
-    private Reply act(Mind mind, Body b, JsonObject args) throws Exception {
-        String say = text(args, "say");
-        JsonArray actions = args.has("actions") && args.get("actions").isJsonArray() ? args.getAsJsonArray("actions") : new JsonArray();
-        JsonObject intentJson = args.has("intent") && args.get("intent").isJsonObject() ? args.getAsJsonObject("intent") : null;
-        if (say == null && actions.isEmpty() && intentJson == null) return invalid("\"\" must have at least one of intent, actions or say");
-        if (actions.size() > 6) return invalid("/actions must NOT have more than 6 items");
-        String reasoning = text(args, "reasoning");
-        if (reasoning != null && reasoning.length() > 600) return invalid("/reasoning must NOT have more than 600 characters");
+    private Reply act(Mind mind, JsonObject args) throws Exception {
         if (!mind.spaced("act", config.act_min_seconds)) return Reply.refuse("rate_limited", "Too many acts in a short time. Wait, then try again.");
+        Body b = body(mind);
+        if (b == null) return UNREACHABLE;
+        String say = text(args, "say");
+        JsonArray actions = args.has("actions") ? args.getAsJsonArray("actions") : new JsonArray();
+        JsonObject intentJson = args.has("intent") ? args.getAsJsonObject("intent") : null;
 
         // Flat result indices: say first, then each action, then the intent.
-        JsonArray accepted = new JsonArray(), rejected = new JsonArray();
+        List<JsonObject> rejected = new ArrayList<>();
         int index = 0;
         int sayIndex = say == null ? -1 : index++;
         int firstAction = index;
         index += actions.size();
         int intentIndex = intentJson == null ? -1 : index;
 
-        if (say != null && (say.isBlank() || say.length() > 256)) {
-            rejected.add(J.obj("index", sayIndex, "reason", say.isBlank() ? "empty" : "out_of_bounds"));
-            say = null;
-        }
-
         // The action list is atomic: one bad action refuses them all.
         List<Task> tasks = new ArrayList<>();
-        List<String> verbs = new ArrayList<>();
         Map<Integer, String> bad = new HashMap<>();
         for (int i = 0; i < actions.size(); i++) {
             try {
-                JsonElement a = actions.get(i);
-                if (!a.isJsonObject()) throw new Plan.Rejected("schema");
-                tasks.add(Plan.action(a.getAsJsonObject(), mind));
-                verbs.add(a.getAsJsonObject().get("do").getAsString());
+                tasks.add(Plan.action(actions.get(i).getAsJsonObject(), mind, config));
             } catch (Plan.Rejected e) {
                 bad.put(i, e.reason);
             } catch (RuntimeException e) {
@@ -421,7 +489,7 @@ public final class World {
         Object intent = null;
         if (intentJson != null) {
             try {
-                intent = Plan.readIntent(intentJson);
+                intent = Plan.readIntent(intentJson, config);
             } catch (Plan.Rejected e) {
                 rejected.add(J.obj("index", intentIndex, "reason", e.reason));
             } catch (RuntimeException e) {
@@ -445,69 +513,110 @@ public final class World {
         if (cost > 0) {
             try {
                 onServer(() -> {
-                    if (spoken != null) speak(b, spoken);
-                    if (!tasks.isEmpty()) mind.plan.setActions(b, tasks, verbs);
-                    if (built != null) mind.plan.setIntent(b, built);
+                    mind.revision++;
+                    mind.plan.submit(mind, b, tick(), tasks, built, spoken);
                     return null;
                 });
+            } catch (InterruptedException e) {
+                mind.refund(config, cost);
+                throw e;
             } catch (Exception e) {
                 mind.refund(config, cost);
                 return UNREACHABLE;
             }
         }
+        JsonArray accepted = new JsonArray();
         if (spoken != null) accepted.add(sayIndex);
         for (int i = 0; i < tasks.size(); i++) accepted.add(firstAction + i);
         if (built != null) accepted.add(intentIndex);
+        rejected.sort(Comparator.comparingInt(o -> o.get("index").getAsInt()));
+        JsonArray refused = new JsonArray();
+        rejected.forEach(refused::add);
         JsonObject out = new JsonObject();
         out.add("accepted", accepted);
-        out.add("rejected", rejected);
+        out.add("rejected", refused);
         out.addProperty("budget_remaining_thoughts", mind.credits(config));
         return Reply.ok(out, cost);
     }
 
-    private Reply await(Mind mind, Body b, JsonObject args) throws Exception {
+    private static int bytes(JsonObject o) { return o.toString().getBytes(StandardCharsets.UTF_8).length; }
+
+    private Reply await(Mind mind, JsonObject args) throws Exception {
         long head = mind.head();
         long cursor = head;
         String given = text(args, "cursor");
         if (given != null) {
-            if (!given.matches("c_[0-9]{1,12}")) return invalid("/cursor must match pattern \"^c_[0-9]{1,12}$\"");
             cursor = Long.parseLong(given.substring(2));
             if (cursor > head) return Reply.refuse("bad_cursor", "The cursor is not one this player was given.");
         }
-        int seconds;
-        try {
-            seconds = args.get("max_seconds").getAsInt();
-        } catch (RuntimeException e) {
-            return Reply.refuse("bad_max_seconds", "max_seconds must be a whole number of seconds, at least 5.");
+        int seconds = Math.min(240, args.get("max_seconds").getAsBigDecimal().intValue());
+        Set<String> interests = ALL_INTERESTS;
+        if (args.has("interests")) {
+            interests = new HashSet<>();
+            for (JsonElement i : args.getAsJsonArray("interests")) interests.add(i.getAsString());
         }
-        if (seconds < 5) return Reply.refuse("bad_max_seconds", "max_seconds must be a whole number of seconds, at least 5.");
-        seconds = Math.min(240, seconds);
-        // An intent ending always wakes; the rest only when asked for.
-        Set<String> wakes = new HashSet<>(Set.of("goal_completed", "precondition_failed", "intent_run_too_long"));
-        if (args.has("interests") && args.get("interests").isJsonArray() && !args.getAsJsonArray("interests").isEmpty()) {
-            for (JsonElement i : args.getAsJsonArray("interests")) {
-                String wake = INTERESTS.get(i.getAsString());
-                if (wake != null) wakes.add(wake);
-            }
-        } else {
-            wakes.addAll(INTERESTS.values());
-        }
-        Mind.Event woke = mind.await(cursor, wakes, seconds * 1000L);
-        List<Mind.Event> events = mind.since(cursor);
-        if (events.size() > 200) events = events.subList(events.size() - 200, events.size());
+        // A body that is away is called back; the wait goes on meanwhile.
+        body(mind);
+        Mind.Woke woke = mind.await(cursor, interests, seconds * 1000L);
+        if (woke == null) return Reply.refuse("wait_replaced", "A newer wait for this player replaced this one.");
         Body now = mind.body;
-        if (now == null || now.isRemoved() || !now.isAlive()) return WAKING;
-        JsonObject out;
+        if (!alive(now)) return WAKING;
+        Snapshot.View view;
         try {
-            out = onServer(() -> Snapshot.of(this, mind, now));
+            view = onServer(() -> Snapshot.of(this, mind, now));
+        } catch (InterruptedException e) {
+            throw e;
         } catch (Exception e) {
             return WAKING;
         }
-        out.add("events", Mind.eventsJson(events));
-        out.addProperty("cursor", "c_" + (events.isEmpty() ? cursor : events.get(events.size() - 1).seq()));
-        out.addProperty("wake_reason", woke == null ? "timeout" : woke.wake());
-        out.addProperty("dropped_events", mind.dropped());
         lastCall.put(mind.seat.id, System.currentTimeMillis());
+
+        Mind.Since since = mind.since(cursor);
+        long dropped = since.dropped();
+        Set<Long> waking = woke.seqs();
+        JsonArray events = Mind.present(since.events());
+
+        // At most forty lines of speech: those that ended the wait first, then the newest of the rest.
+        List<Mind.Event> lines = new ArrayList<>();
+        for (Mind.Event e : since.events()) if (e.kind.equals("speech")) lines.add(e);
+        if (lines.size() > SPEECH_LINES) {
+            List<Mind.Event> owned = new ArrayList<>(), others = new ArrayList<>();
+            for (Mind.Event e : lines) (waking.contains(e.seq) ? owned : others).add(e);
+            if (owned.size() > SPEECH_LINES) owned = owned.subList(owned.size() - SPEECH_LINES, owned.size());
+            int room = SPEECH_LINES - owned.size();
+            Set<Mind.Event> keep = new HashSet<>(owned);
+            if (room > 0) keep.addAll(others.subList(Math.max(0, others.size() - room), others.size()));
+            lines.removeIf(e -> !keep.contains(e));
+        }
+        JsonArray speech = new JsonArray();
+        for (Mind.Event e : lines) speech.add(J.obj("from", Snapshot.cut(e.from, 32), "text", Snapshot.cut(e.text, 512)));
+
+        JsonObject world = new JsonObject();
+        if (!speech.isEmpty()) world.add("speech", speech);
+        if (!view.signs().isEmpty()) world.add("signs", view.signs());
+        JsonObject out = new JsonObject();
+        out.add("snapshot", view.snapshot());
+        out.add("events", events);
+        out.addProperty("cursor", "c_" + mind.head());
+        out.addProperty("wake_reason", woke.reason());
+        out.addProperty("dropped_events", dropped);
+        out.add("untrusted_world_text", world);
+        out.addProperty("note", Snapshot.NOTE);
+
+        // Too much to send: the oldest events that did not end the wait go first, then speech that did not.
+        while (events.size() > MAX_WAIT_EVENTS || bytes(out) > MAX_RESULT_BYTES) {
+            int at = -1;
+            for (int i = 0; i < events.size() && at < 0; i++) if (!waking.contains(events.get(i).getAsJsonObject().get("seq").getAsLong())) at = i;
+            if (at < 0 && events.size() > MAX_WAIT_EVENTS) at = 0;
+            if (at < 0) break;
+            events.remove(at);
+            out.addProperty("dropped_events", ++dropped);
+        }
+        for (int i = 0; i < speech.size() && bytes(out) > MAX_RESULT_BYTES; ) {
+            if (waking.contains(lines.get(i).seq)) { i++; continue; }
+            speech.remove(i);
+            lines.remove(i);
+        }
         return Reply.ok(out);
     }
 
@@ -517,30 +626,39 @@ public final class World {
      */
     private Reply sleep(Mind mind, Body b) throws Exception {
         long day = onServer(() -> {
-            mind.plan.setActions(b, List.of(new Tasks.Sleep()), List.of("sleep"));
+            mind.revision++;
+            mind.plan.submit(mind, b, tick(), List.of(new Tasks.Sleep()), null, null);
             return Goldar.day(b.level());
         });
-        List<Mind.Event> since = mind.since(mind.sleepCursor);
-        long lost = mind.dropped();
-        mind.journal("Day " + day + ": asleep. " + since.size() + " events since the last sleep, " + lost + " lost before them.");
-        if (!since.isEmpty()) mind.sleepCursor = since.get(since.size() - 1).seq();
-        mind.lastSleepDay = day;
-
+        Mind.Since since = mind.since(mind.sleepCursor);
         JsonArray events = new JsonArray();
-        Map<String, Integer> counts = new TreeMap<>();
-        for (int i = 0; i < since.size(); i++) {
-            Mind.Event e = since.get(i);
-            counts.merge(e.type(), 1, Integer::sum);
-            if (i >= since.size() - 100) events.add(J.obj("seq", e.seq(), "type", e.type(), "tick", e.tick(), "text", DIGEST.getOrDefault(e.type(), e.text())));
+        List<JsonObject> digested = new ArrayList<>();
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        List<JsonObject> speech = new ArrayList<>();
+        for (Mind.Event e : since.events()) {
+            String[] as = DIGEST.get(e.kind);
+            if (as == null) continue;
+            digested.add(J.obj("seq", e.seq, "type", as[0], "tick", e.tick, "text", as[1]));
+            counts.merge(as[0], 1, Integer::sum);
+            if (e.kind.equals("speech")) speech.add(J.obj("from", e.from == null ? "someone" : e.from, "text", e.text == null ? "" : e.text));
         }
+        mind.journal("Day " + day + ": asleep. " + digested.size() + " events since the last sleep, " + since.dropped() + " lost before them.");
+        if (!since.events().isEmpty()) mind.sleepCursor = since.events().get(since.events().size() - 1).seq;
+        mind.lastSleepDay = day;
+        mind.save();
+
+        for (JsonObject e : digested.subList(Math.max(0, digested.size() - 100), digested.size())) events.add(e);
         JsonObject eventCounts = new JsonObject();
         counts.forEach(eventCounts::addProperty);
         JsonObject out = J.obj("day", day, "days_since_sleep", 0);
         out.add("events", events);
         out.add("event_counts", eventCounts);
         JsonObject world = new JsonObject();
-        JsonArray speech = onServer(() -> Snapshot.speech(mind));
-        if (!speech.isEmpty()) world.add("speech", speech);
+        if (!speech.isEmpty()) {
+            JsonArray lines = new JsonArray();
+            speech.subList(Math.max(0, speech.size() - SPEECH_LINES), speech.size()).forEach(lines::add);
+            world.add("speech", lines);
+        }
         out.add("untrusted_world_text", world);
         out.addProperty("note", Snapshot.NOTE);
         return Reply.ok(out);
@@ -566,12 +684,8 @@ public final class World {
     }
 
     private Reply writeBook(Mind mind, Body b, JsonObject args) throws Exception {
-        String title = text(args, "title"), text = text(args, "text"), skill = text(args, "skill_id");
-        if (title == null) return invalid("\"\" must have required property 'title'");
-        if (title.length() > 32) return invalid("/title must NOT have more than 32 characters");
-        if ((text == null) == (skill == null)) return invalid("\"\" must have exactly one of skill_id or text");
-        if (skill != null) return Reply.refuse("unknown_skill", "That skill is not defined.");
-        if (text.length() > 8192) return invalid("/text must NOT have more than 8192 characters");
+        String title = text(args, "title"), text = text(args, "text");
+        if (args.has("skill_id")) return Reply.refuse("unknown_skill", "That skill is not defined.");
         if (!onServer(() -> Books.canWrite(b))) return Reply.refuse("missing_materials", "A book takes a book, an ink sac and a feather.");
         if (!mind.spend(config, 1)) return Reply.refuse("budget_exhausted", "No thoughts left.");
         Books.Read read = onServer(() -> Books.canWrite(b) ? Books.write(b, title, text) : null);
@@ -595,10 +709,7 @@ public final class World {
 
     private Reply offer(Mind mind, Body b, JsonObject args) throws Exception {
         String item = text(args, "item");
-        if (item == null || !ITEM.matcher(item).matches()) return invalid("/item must match pattern \"^[a-z0-9_]{1,64}$\"");
-        int count;
-        try { count = args.get("count").getAsInt(); } catch (RuntimeException e) { return invalid("\"\" must have required property 'count'"); }
-        if (count < 1 || count > 64) return invalid("/count must be >= 1 and <= 64");
+        int count = args.get("count").getAsInt();
         if (!mind.spend(config, 1)) return outcome(mind, "budget_exhausted", new JsonObject());
         String refusal = onServer(() -> commons.offer(mind, b, item, count, Goldar.day(b.level())));
         return outcome(mind, refusal, new JsonObject());
@@ -606,9 +717,6 @@ public final class World {
 
     private Reply propose(Mind mind, Body b, JsonObject args) throws Exception {
         String rule = text(args, "rule"), reason = text(args, "reason");
-        if (rule == null || rule.isEmpty() || rule.length() > 256) return invalid("/rule must be 1 to 256 characters");
-        if (reason == null || !args.has("value")) return invalid("\"\" must have required properties 'value' and 'reason'");
-        if (reason.length() > 256) return invalid("/reason must NOT have more than 256 characters");
         if (!mind.spend(config, 1)) return outcome(mind, "budget_exhausted", J.obj("proposal_id", "pr_none"));
         Object result = onServer(() -> {
             Object made = commons.propose(mind, b, rule, args.get("value"), reason, Goldar.day(b.level()));
@@ -618,7 +726,7 @@ public final class World {
                 long tick = tick();
                 for (ServerPlayer p : server.getPlayerList().getPlayers()) {
                     if (p instanceof Body other && other != b && other.level() == b.level() && other.blockPosition().closerThan(moot, Commons.ANNOUNCE_RADIUS)) {
-                        other.mind.emit(tick, "proposal", "A proposal was put forward.", wakeFor(other.mind, "proposal"));
+                        other.mind.simple(tick, "proposal");
                     }
                 }
             }
@@ -630,8 +738,6 @@ public final class World {
 
     private Reply vote(Mind mind, JsonObject args) throws Exception {
         String id = text(args, "proposal_id"), vote = text(args, "vote");
-        if (id == null || !id.startsWith("pr_")) return invalid("/proposal_id must match pattern \"^pr_\"");
-        if (!"yes".equals(vote) && !"no".equals(vote)) return invalid("/vote must be equal to one of the allowed values");
         if (!mind.spend(config, 1)) return outcome(mind, "budget_exhausted", new JsonObject());
         return outcome(mind, onServer(() -> commons.vote(mind, id, vote)), new JsonObject());
     }

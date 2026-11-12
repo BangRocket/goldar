@@ -84,7 +84,7 @@ public final class Tasks {
 
     // ---- walking ----
 
-    /** Walks to within `range` blocks of a target, digging through what the pathfinder says is worth digging. */
+    /** Walks to within `range` blocks of a target. It goes round what is in the way and never digs or builds. */
     public static final class Walk implements Task {
         private static final int MAX_PLANS = 6;
         private static final int STUCK_TICKS = 50;
@@ -101,7 +101,9 @@ public final class Tasks {
         public Walk(BlockPos target, int range) { this(b -> target, range); }
 
         private boolean arrived(BlockPos feet, BlockPos goal) {
-            return range == 0 ? feet.equals(goal) : feet.distSqr(goal) <= (double) range * range + 0.01;
+            if (range == 0) return feet.equals(goal);
+            if (range == 1) return Math.abs(feet.getX() - goal.getX()) <= 1 && Math.abs(feet.getY() - goal.getY()) <= 1 && Math.abs(feet.getZ() - goal.getZ()) <= 1;
+            return feet.distSqr(goal) <= (double) range * range + 0.01;
         }
 
         @Override public Outcome tick(Body b) {
@@ -113,7 +115,7 @@ public final class Tasks {
             if (path == null || index >= path.size()) {
                 if (path != null && complete) { b.halt(); return Outcome.OK; }
                 if (++plans > MAX_PLANS) { b.halt(); return Outcome.fail("blocked", "no way there"); }
-                var found = new Pathfinder(new LevelTerrain(level(b), b), new Pathfinder.Build(0, true))
+                var found = new Pathfinder(new LevelTerrain(level(b), b), Pathfinder.Build.NONE)
                     .find(feet, p -> arrived(p, goal), p -> Math.sqrt(p.distSqr(goal)));
                 if (found.path().isEmpty()) { b.halt(); return Outcome.fail("blocked", "no way there"); }
                 path = found.path();
@@ -164,7 +166,7 @@ public final class Tasks {
         private Dig dig;
         private int pickup;
         private BlockPos broken, dropAt;
-        private boolean lavaOnly;
+        private int had = -1;
 
         /** Mines `count` blocks. With `item` and `goal`, stops as soon as the inventory holds that many. */
         public Mine(String block, int count, int radius, String item, int goal) {
@@ -173,7 +175,7 @@ public final class Tasks {
 
         public Mine(String block, int count) { this(block, count, SEARCH, null, 0); }
 
-        private boolean done(Body b) { return left <= 0 || item != null && b.count(item) >= goal; }
+        private boolean done(Body b) { return item != null ? b.count(item) >= goal : left <= 0; }
 
         @Override public Outcome tick(Body b) {
             ServerLevel level = level(b);
@@ -188,6 +190,8 @@ public final class Tasks {
                     pickup = 0;
                     walk = null;
                     b.halt();
+                    // Gathering is for the item: a block that gave none ends it.
+                    if (item != null && b.count(item) <= had) return Outcome.fail("not_possible", "mining " + block + " did not add " + item + " to the inventory");
                     return null;
                 }
                 if (drop == null) return null;
@@ -203,18 +207,14 @@ public final class Tasks {
                 if (!BuiltInRegistries.BLOCK.containsKey(net.minecraft.resources.Identifier.withDefaultNamespace(block))) {
                     return Outcome.fail("invalid_args", "unknown block " + block);
                 }
-                BlockPos under = b.blockPosition().below();
-                Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius, p -> {
-                    if (tried.contains(p) || p.equals(under) || !Body.name(level.getBlockState(p)).equals(block)) return false;
-                    if (lavaBeside(level, p)) { lavaOnly = true; return false; }
-                    return true;
-                });
-                if (found.isEmpty()) {
-                    return lavaOnly ? Outcome.fail("not_possible", "the only " + block + " left in range is beside lava")
-                        : Outcome.fail("not_found", "no " + block + " within " + radius);
-                }
+                Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius,
+                    p -> !tried.contains(p) && Body.name(level.getBlockState(p)).equals(block));
+                if (found.isEmpty()) return Outcome.fail("not_found", "no " + block + " within " + radius);
                 at = found.get().immutable();
                 tried.add(at);
+                // Breaking the block underfoot would drop the body.
+                if (at.equals(b.blockPosition().below())) return Outcome.fail("not_possible", "would drop the body");
+                if (item != null) had = b.count(item);
                 BlockState s = level.getBlockState(at);
                 if (!b.holdToolFor(s)) return Outcome.fail("missing_materials", block + " needs a better tool");
                 walk = b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) <= REACH ? null : new Walk(at, 3);
@@ -224,8 +224,9 @@ public final class Tasks {
                 Outcome o = walk.tick(b);
                 if (o == null) return null;
                 walk = null;
-                // A block that can't be reached is skipped, not fatal: the next nearest is tried.
-                if (!o.ok() || b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) > REACH + 1) { at = null; return null; }
+                if (!o.ok()) return o;
+                if (b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) > REACH + 1) return Outcome.fail("out_of_reach", "could not get near the " + block);
+                if (at.equals(b.blockPosition().below())) return Outcome.fail("not_possible", "would drop the body");
             }
             Boolean open = dig.tick(b);
             if (open == null) return null;
@@ -241,23 +242,50 @@ public final class Tasks {
 
     // ---- placing ----
 
-    /** Places a block from the inventory at a position, or under the feet by jumping. */
+    /** Places a block from the inventory at a position. One that would stand in the body goes in the first free cell beside it. */
     public static final class Place implements Task {
         private final String block;
         private final BlockPos target;
         private Walk walk;
         private BlockPos at;
-        private int ticks;
+        private static final Set<String> REPLACEABLE = Set.of("air", "cave_air", "void_air", "water", "short_grass", "tall_grass", "fern", "snow");
 
         public Place(String block, BlockPos target) { this.block = block; this.target = target; }
+
+        private static boolean replaceable(ServerLevel level, BlockPos p) { return REPLACEABLE.contains(Body.name(level.getBlockState(p))); }
+
+        /** The first open cell beside the body, starting the way it faces, that has something solid to place against. */
+        private static BlockPos freeBeside(Body b) {
+            ServerLevel level = level(b);
+            Direction facing = b.getDirection();
+            for (Direction d : new Direction[] {facing, facing.getClockWise(), facing.getOpposite(), facing.getCounterClockWise()}) {
+                BlockPos cell = b.blockPosition().relative(d);
+                if (!replaceable(level, cell)) continue;
+                for (Direction n : Direction.values()) {
+                    BlockPos against = cell.relative(n);
+                    if (!level.getBlockState(against).getCollisionShape(level, against).isEmpty()) return cell;
+                }
+            }
+            return null;
+        }
 
         @Override public Outcome tick(Body b) {
             ServerLevel level = level(b);
             int slot = b.slotOf(block);
             if (slot < 0) return Outcome.fail("missing_materials", "no " + block + " in the inventory");
             if (at == null) {
+                var placed = BuiltInRegistries.BLOCK.getOptional(net.minecraft.resources.Identifier.withDefaultNamespace(block));
+                if (placed.isEmpty() || !(b.getInventory().getNonEquipmentItems().get(slot).getItem() instanceof net.minecraft.world.item.BlockItem)) {
+                    return Outcome.fail("not_possible", block + " is not a block");
+                }
                 at = target != null ? target : b.blockPosition();
-                if (target != null && b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) > REACH) walk = new Walk(at, 3);
+                if (!replaceable(level, at)) return Outcome.fail("blocked", "target is occupied: name an empty position or mine the block first");
+                boolean solid = !placed.get().defaultBlockState().getCollisionShape(level, at).isEmpty();
+                if (solid && b.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(at))) {
+                    at = freeBeside(b);
+                    if (at == null) return Outcome.fail("blocked", "no free space next to you: step to open ground or name a position");
+                }
+                if (b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) > REACH) walk = new Walk(at, 3);
             }
             if (walk != null) {
                 Outcome o = walk.tick(b);
@@ -265,15 +293,7 @@ public final class Tasks {
                 walk = null;
                 if (!o.ok()) return o;
             }
-            if (!level.getBlockState(at).canBeReplaced()) return Outcome.fail("blocked", "target is occupied: name an empty position or mine the block first");
-            if (target == null) {
-                // Under the feet: jump, and place once the feet have left the cell.
-                if (++ticks > 40) { b.halt(); return Outcome.fail("blocked", "could not jump clear"); }
-                b.steer(null, true);
-                if (b.getY() < at.getY() + 1.0) return null;
-            } else if (b.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(at))) {
-                return Outcome.fail("blocked", "you are inside a block: step to open ground first");
-            }
+            if (!replaceable(level, at)) return Outcome.fail("blocked", "target is occupied: name an empty position or mine the block first");
             for (Direction d : Direction.values()) {
                 BlockPos against = at.relative(d);
                 if (level.getBlockState(against).getCollisionShape(level, against).isEmpty()) continue;
@@ -284,6 +304,9 @@ public final class Tasks {
                 b.halt();
                 if (!result.consumesAction()) continue;
                 b.swing(InteractionHand.MAIN_HAND);
+                if (!Body.name(level.getBlockState(at)).equals(block)) {
+                    return Outcome.fail("blocked", "the block did not appear at the target: stand on solid ground and choose a block position next to you");
+                }
                 b.blockOperations++;
                 return Outcome.OK;
             }
@@ -296,12 +319,12 @@ public final class Tasks {
 
     /** Hits the nearest creature of a kind, or a named agent, until it is dead. */
     public static final class Attack implements Task {
-        private static final int MAX_TICKS = 1200;
+        private static final int MAX_TICKS = 600, MAX_SWINGS = 80;
         private final String target;
         private LivingEntity victim;
-        private int ticks;
+        private int ticks, swings;
 
-        public Attack(String target) { this.target = target.replaceFirst("^minecraft:", ""); }
+        public Attack(String target) { this.target = target; }
 
         /** Fights one known creature. */
         public Attack(LivingEntity victim) { this.target = BuiltInRegistries.ENTITY_TYPE.getKey(victim.getType()).getPath(); this.victim = victim; }
@@ -322,7 +345,7 @@ public final class Tasks {
                 double best = Double.MAX_VALUE;
                 for (Entity e : level(b).getEntities(b, b.getBoundingBox().inflate(24), x -> x instanceof LivingEntity l && l.isAlive())) {
                     String type = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
-                    boolean named = e instanceof Player p && p.getGameProfile().name().equalsIgnoreCase(target);
+                    boolean named = e instanceof Player p && p.getGameProfile().name().equals(target);
                     if (!named && !type.equals(target)) continue;
                     double d = e.distanceToSqr(b);
                     if (d < best) { best = d; victim = (LivingEntity) e; }
@@ -338,6 +361,7 @@ public final class Tasks {
             } else {
                 b.halt();
                 if (b.getAttackStrengthScale(0) >= 1f) {
+                    if (++swings > MAX_SWINGS) return Outcome.fail("timeout", "the fight went on too long");
                     b.attack(victim);
                     b.swing(InteractionHand.MAIN_HAND);
                     b.resetAttackStrengthTicker();
@@ -353,7 +377,7 @@ public final class Tasks {
     public static final class Eat implements Task {
         private static final Set<String> BANNED_FOODS = Set.of("rotten_flesh", "spider_eye", "poisonous_potato", "pufferfish", "suspicious_stew", "chorus_fruit");
         private boolean started;
-        private int ticks;
+        private int ticks, before, waited = -1;
 
         static int foodSlot(Body b) {
             var items = b.getInventory().getNonEquipmentItems();
@@ -373,18 +397,21 @@ public final class Tasks {
                 if (!b.getFoodData().needsFood()) return Outcome.fail("not_possible", "not hungry");
                 b.hold(slot);
                 b.halt();
+                before = b.getFoodData().getFoodLevel();
                 b.gameMode.useItem(b, level(b), b.getMainHandItem(), InteractionHand.MAIN_HAND);
                 started = true;
                 return null;
             }
+            if (b.getFoodData().getFoodLevel() > before) return Outcome.OK;
             if (b.isUsingItem() && ++ticks < 80) return null;
-            return Outcome.OK;
+            // The meal is over: hunger must show it within three seconds.
+            return ++waited < 60 ? null : Outcome.fail("timeout", "food did not rise");
         }
     }
 
     // ---- sleeping ----
 
-    /** Sleeps in the nearest bed until morning. */
+    /** Lies down in the nearest bed. Done as soon as the body is asleep. */
     public static final class Sleep implements Task {
         private Walk walk;
         private BlockPos bed;
@@ -392,9 +419,9 @@ public final class Tasks {
 
         @Override public Outcome tick(Body b) {
             ServerLevel level = level(b);
-            if (asleep) return b.isSleeping() ? null : Outcome.OK;
+            if (asleep) return Outcome.OK;
             if (bed == null) {
-                Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), 32, 16, p -> level.getBlockState(p).is(BlockTags.BEDS));
+                Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), 32, 32, p -> level.getBlockState(p).is(BlockTags.BEDS));
                 if (found.isEmpty()) return Outcome.fail("not_found", "no bed");
                 if (!Reflexes.isNight(level)) return Outcome.fail("not_possible", "you can only sleep at night or in a thunderstorm");
                 bed = found.get().immutable();
@@ -409,10 +436,10 @@ public final class Tasks {
             var result = b.startSleepInBed(bed);
             if (result.left().isPresent()) return Outcome.fail("not_possible", "could not sleep: " + result.left().get().toString().toLowerCase());
             asleep = true;
-            return null;
+            return Outcome.OK;
         }
 
-        @Override public void stop(Body b) { if (b.isSleeping()) b.stopSleepInBed(true, true); b.halt(); }
+        @Override public void stop(Body b) { if (b.isSleeping() && !asleep) b.stopSleepInBed(true, true); b.halt(); }
     }
 
     // ---- several things in a row ----
@@ -636,7 +663,7 @@ public final class Tasks {
         }
     }
 
-    /** Moves items between the inventory and a chest, barrel or other container block, through its screen. */
+    /** Moves items between the inventory and a chest or barrel, through its screen. */
     public static final class Transfer implements Task {
         public enum Kind { OPEN, DEPOSIT, WITHDRAW }
 
@@ -649,7 +676,9 @@ public final class Tasks {
         public Transfer(Kind kind, BlockPos at, String item, int count) { this.kind = kind; this.at = at; this.item = item; this.count = count; }
 
         @Override public Outcome tick(Body b) {
-            if (!(level(b).getBlockEntity(at) instanceof Container)) return Outcome.fail("not_found", "no container at that position");
+            if (!Set.of("chest", "trapped_chest", "barrel").contains(Body.name(level(b).getBlockState(at))) || !(level(b).getBlockEntity(at) instanceof Container)) {
+                return Outcome.fail("not_found", "no container at that position");
+            }
             if (walk == null) walk = new Walk(at, 3);
             Outcome o = walk.tick(b);
             if (o == null) return null;
@@ -661,11 +690,7 @@ public final class Tasks {
                 java.util.function.Predicate<ItemStack> wanted = s -> Body.name(s).equals(item);
                 switch (kind) {
                     case OPEN -> {
-                        java.util.Map<String, Integer> held = new java.util.TreeMap<>();
-                        for (Slot s : menu.slots) if (box.test(s) && s.hasItem()) held.merge(Body.name(s.getItem()), s.getItem().getCount(), Integer::sum);
-                        StringBuilder sb = new StringBuilder();
-                        held.forEach((k, v) -> sb.append(sb.isEmpty() ? "" : ", ").append(v).append(' ').append(k));
-                        return new Outcome(true, null, "It holds " + (sb.isEmpty() ? "nothing" : sb) + ".");
+                        return Outcome.OK;
                     }
                     case DEPOSIT -> {
                         if (b.count(item) < count) return Outcome.fail("missing_materials", "inventory has only " + b.count(item) + " " + item);
@@ -673,6 +698,10 @@ public final class Tasks {
                         return moved < count ? Outcome.fail("not_possible", "container full") : Outcome.OK;
                     }
                     default -> {
+                        // All or nothing: a container that holds too few gives none.
+                        int there = 0;
+                        for (Slot s : menu.slots) if (box.test(s) && s.hasItem() && wanted.test(s.getItem())) there += s.getItem().getCount();
+                        if (there < count) return Outcome.fail("not_found", "the container holds only " + there + " " + item);
                         int moved = Menus.move(b, box, mine, wanted, count);
                         return moved < count ? Outcome.fail(moved == 0 ? "not_found" : "not_possible", "moved " + moved + " of " + count + " " + item) : Outcome.OK;
                     }

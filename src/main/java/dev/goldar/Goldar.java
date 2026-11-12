@@ -42,7 +42,8 @@ public final class Goldar {
 
     public static long time(Level level) { return level.getDefaultClockTime(); }
 
-    public static long day(Level level) { return time(level) / 24000; }
+    /** The day of the world, counted from its age: a night slept through does not skip one. */
+    public static long day(Level level) { return level.getGameTime() / 24000; }
 
     @SubscribeEvent public void started(ServerStartedEvent event) {
         MinecraftServer server = event.getServer();
@@ -70,6 +71,10 @@ public final class Goldar {
         if (world != null) world.close();
         mcp = null;
         world = null;
+    }
+
+    @SubscribeEvent public void chat(net.neoforged.neoforge.event.ServerChatEvent event) {
+        if (world != null) world.onChat(event.getPlayer(), event.getRawText());
     }
 
     @SubscribeEvent public void tick(ServerTickEvent.Post event) {
@@ -117,6 +122,7 @@ public final class Goldar {
                 if (world == null) return reply(c, "Goldar is not running.");
                 try {
                     String token = world.config.rotate(StringArgumentType.getString(c, "id"));
+                    if (token != null && mcp != null) mcp.revoke(StringArgumentType.getString(c, "id"));
                     return reply(c, token == null ? "No such player." : "New token, shown once: " + token);
                 } catch (IOException e) {
                     return reply(c, "Could not save the config: " + e.getMessage());

@@ -192,13 +192,13 @@ public final class Crafting {
                 return null;
             }
             // Nothing on a grid makes it: a furnace might.
-            if (made == 0 && Smelt.recipeFor(b, item) != null) {
+            if (made == 0 && Goldar.world().config.extra_actions && Smelt.recipeFor(b, item) != null) {
                 smelt = new Smelt(item, count);
                 return smelt.tick(b);
             }
             if (all.isEmpty()) return Outcome.fail("not_possible", "not craftable");
             if (known.isEmpty()) return Outcome.fail("not_possible", "the recipe for " + item + " is not unlocked");
-            return Outcome.fail("missing_materials", "missing " + (missing == null ? "materials" : missing) + (made > 0 ? " after making " + made : ""));
+            return Outcome.fail("missing_materials", "missing " + (missing == null ? "materials" : missing));
         }
     }
 

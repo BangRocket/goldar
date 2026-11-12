@@ -145,7 +145,7 @@ final class Reflexes {
         LivingEntity best = null;
         for (Entity e : b.level().getEntities(b, b.getBoundingBox().inflate(radius), x -> x instanceof Enemy && x instanceof LivingEntity l && l.isAlive())) {
             String type = type(e);
-            if (NEUTRAL.contains(type) || !night && (type.equals("spider") || type.equals("cave_spider"))) continue;
+            if (NEUTRAL.contains(type) || !night && type.equals("spider")) continue;
             if (e.distanceTo(b) <= radius && (best == null || e.distanceToSqr(b) < best.distanceToSqr(b))) best = (LivingEntity) e;
         }
         return best;
@@ -210,7 +210,7 @@ final class Reflexes {
             if (solid(level, BlockPos.containing(x, b.getY() + 0.5, z))) return 0;
             int drop = 0;
             for (BlockPos p = BlockPos.containing(x, Math.floor(b.getY()) - 1, z); drop < 32; p = p.below(), drop++) {
-                if (!level.isLoaded(p) || !level.getFluidState(p).isEmpty()) return 0;
+                if (!level.isLoaded(p) || level.getFluidState(p).is(FluidTags.WATER)) return 0;
                 if (solid(level, p)) break;
             }
             return drop;
@@ -505,7 +505,7 @@ final class Reflexes {
                 boolean ok = solid(level, f.below());
                 for (BlockPos cell : new BlockPos[] {f, f.above()}) {
                     BlockState s = level.getBlockState(cell);
-                    ok &= s.getDestroySpeed(level, cell) >= 0 && s.getFluidState().isEmpty();
+                    ok &= s.getFluidState().isEmpty() && (!solid(level, cell) || DIGGABLE.contains(Body.name(s)));
                     for (Direction n : Direction.values()) ok &= level.getFluidState(cell.relative(n)).isEmpty();
                 }
                 if (!ok) continue;
@@ -531,12 +531,12 @@ final class Reflexes {
                     if (!feet.equals(burrow.pocket())) { burrow = null; return null; }
                     return leave(burrow);
                 }
-                return enclosed(level, feet) && !level.getFluidState(feet).is(FluidTags.WATER) ? breakOut(b) : null;
+                return enclosed(level, feet) ? breakOut(b) : null;
             }
             if (enclosed(level, feet) || b.isSleeping()) return null;
-            if (tick - bedCheckedAt >= 100) {
+            if (tick - bedCheckedAt >= 20) {
                 bedCheckedAt = tick;
-                bedNearby = BlockPos.findClosestMatch(feet, 32, 8, p -> level.getBlockState(p).is(BlockTags.BEDS)).isPresent();
+                bedNearby = BlockPos.findClosestMatch(feet, 32, 32, p -> level.getBlockState(p).is(BlockTags.BEDS)).isPresent();
             }
             if (bedNearby) return null;
             BlockPos pocket = pocket(level, feet);

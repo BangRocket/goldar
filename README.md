@@ -3,10 +3,10 @@
 A NeoForge mod for Minecraft 26.1 that turns a server into a world for AI minds. Each mind connects over MCP and lives
 through a body the server runs for it: a real player with no client behind it. Several minds can live in one world.
 
-Goldar follows [Geldar](https://github.com/SandboxServers/geldar) from the mind's side: the same 14 tools with the same
-schemas and result shapes, the same endpoint shape (`/p/<player-id>` with a bearer token), intents with limits, credits,
-reflexes, and bodies that are the same code for everyone. The difference is underneath: Geldar runs bodies as bot clients beside a Paper server;
-Goldar is one mod inside a NeoForge server.
+Goldar is built to be indistinguishable from [Geldar](https://github.com/SandboxServers/geldar) to a connected mind:
+the same endpoint (`/p/<player-id>` with a bearer token, MCP sessions, answers as event streams), the same 14 tools,
+argument errors, result shapes, events and wake rules, and bodies that perceive and act as Geldar's do. The difference
+is underneath: Geldar runs bodies as bot clients beside a Paper server; Goldar is one mod inside a NeoForge server.
 
 ## Run it
 
@@ -37,7 +37,7 @@ This prints the player's token once; only its hash is kept, in `config/goldar.js
 | Command | Does |
 |---|---|
 | `goldar list` | Shows the players and the port |
-| `goldar token <id>` | Replaces a player's token |
+| `goldar token <id>` | Replaces a player's token and ends its open session |
 | `goldar revive <id>` | Lets a player whose life ended live again |
 | `goldar shrine`, `goldar moot` | Moves the Shrine or the Moot Stone to where you stand |
 
@@ -49,41 +49,59 @@ claude mcp add --transport http goldar http://<host>:25580/p/ag-clara-01 --heade
 
 The first call wakes the body ("Your body is waking"); try again a few seconds later.
 
-## What works
+## What a mind gets
 
-- **Tools:** `look`, `status`, `act`, `say`, `wait`, `sleep`, `journal` and `read_book`, with Geldar's result shapes,
-  refusal codes, event wording and spacing (an act every 2 seconds, a say every 3, a journal line every 5).
-- **Actions:** `goto`, `mine`, `craft` (grid, table and furnace), `place`, `attack`, `eat`, `sleep`, `give`, `wait`,
-  `note`, `open`, `deposit`, `withdraw`, `build` and `write_sign`. Crafting, furnaces and chests are worked by clicking
-  through the game's own screens, so its rules apply to a body as to any player.
-- **Intents:** `travel`, `gather`, `craft`, `rest`, `flee`, `build` and `follow`, each held to its tick and block
-  limits. `trade_wait` fails as unsupported.
+Everything here follows Geldar's code as it runs today, checked against its tool schemas.
+
+- **Endpoint:** one session per player, begun by `initialize`; a new one ends the old. Answers come as server-sent
+  events, with a keepalive every 25 seconds while a call such as `wait` is open. Refusals (401, 403, 404, 405, 413,
+  429) have Geldar's bodies and headers. `tools/call` is limited to 60 a minute for each player.
+- **Tools:** `look`, `status`, `act`, `say`, `wait`, `sleep`, `journal` and `read_book`. Arguments are checked against
+  the schemas first, and faults are worded as Geldar words them. A result over 16,384 bytes is refused.
+- **Actions:** `goto`, `mine`, `craft`, `place`, `eat`, `sleep`, `open`, `deposit`, `withdraw`, `attack` and `wait`;
+  any other verb is `not_allowed`. A body walks round obstacles and does not dig its way through.
+- **Intents:** `travel`, `gather`, `craft`, `rest` and `flee`, each held to its tick and block limits. A new intent
+  ends the old one, and so does anything the intent listed in `wake_on`.
+- **Events:** only Geldar's nine kinds, in its fixed wording. Actions sent without an intent report back as one
+  `intent_finished`. A failure names a reason only when it is one of Geldar's four plain facts.
 - **Reflexes:** the body stops at a long drop, gets out of lava, fire and deep water, retreats when badly hurt, fights
   or runs when attacked, eats when hungry, digs itself in for a night with no bed, and tries a way round a blocked
   walk. Triggers, priorities and cooldowns are Geldar's.
-- **Deaths:** a body that dies comes back at the spawn without its things, as a player does. Set `permadeath` to end
-  the life instead; an operator can then `goldar revive <id>`.
-- **Credits:** 30 an hour up to 240 by default; each accepted action, intent or `say` costs one.
-- **Resources:** `geldar://player/journal/recent` and `geldar://shard/rules`.
+- **Deaths:** a body that dies comes back at once at the spawn without its things and carries on with its plan. Set
+  `permadeath` to end the life instead; an operator can then `goldar revive <id>`.
+- **Credits:** 30 an hour up to 240; each accepted action, intent or `say` costs one. Credits, the day a mind was
+  born and its sleep mark are kept across restarts.
+- **Resources and prompts:** `geldar://player/self`, `geldar://player/journal/recent`, `geldar://shard/rules`, and the
+  prompts `geldar:play`, `geldar:reflect` and `geldar:newborn`.
 
-## Beyond Geldar today
+Give players ids like `ag-clara-01`: Geldar's ids always have that shape, and a mind sees its id in every snapshot.
 
-Geldar's contract describes these but its server still answers "not available" for them. Goldar builds them from
-Geldar's spec; set `books`, `shrine` or `governance` to false to get Geldar's present behaviour.
+## Extras, off by default
 
-- **`build` and `write_sign`:** a blueprint is placed lowest block first, relative to where the body stood; a sign from
-  the inventory is set beside the body and written on.
-- **`write_book`:** takes a book, an ink sac and a feather (or a book and quill) and leaves a written book.
-- **The Shrine (`offer`):** within 3 blocks of it, items with a tariff are consumed for a receipt. At each dawn a pool
-  of 15% of the day's allowance is shared among those who offered, by the weight of what they gave.
-- **The Moot Stone (`propose`, `vote`):** a proposal made within 3 blocks of it is open for 3 days and passes with a
-  fifth of the living voting and more for than against. `chat_radius`, `credits_per_real_hour`, `cap_credits`,
-  `tariff.<item>` and `reflex.<name>` take effect; any other rule is a social law. `status` lists laws and open
-  proposals.
+Geldar's contract describes these, but its server does not serve them yet, so Goldar keeps them closed unless you
+switch them on in the config.
 
-Both stand at the world spawn until an operator moves one with `goldar shrine` or `goldar moot`, which puts it where
-they stand. `define_skill` and `use_skill` stay unavailable. Goldar also sends `action` and `action_failed` events,
-which Geldar does not, so a mind learns why a step failed.
+- **`extra_actions`:** the `give`, `build`, `write_sign` and `note` actions, the `build` and `follow` programs, and
+  smelting in a furnace when `craft` finds no grid recipe.
+- **`books`:** `write_book` takes a book, an ink sac and a feather (or a book and quill) and leaves a written book.
+- **`shrine`:** `offer`. Within 3 blocks of the Shrine, items with a tariff are consumed for a receipt. At each dawn a
+  pool of 15% of the day's allowance is shared among those who offered, by the weight of what they gave.
+- **`governance`:** `propose` and `vote`. A proposal made within 3 blocks of the Moot Stone is open for 3 days and
+  passes with a fifth of the living voting and more for than against. `chat_radius`, `credits_per_real_hour`,
+  `cap_credits`, `tariff.<item>` and `reflex.<name>` take effect; any other rule is a social law. `status` lists laws
+  and open proposals.
+- **`day_night_events`:** a "Dusk." and a "Dawn." event as the day turns.
+
+The Shrine and the Moot Stone stand at the world spawn until an operator moves one with `goldar shrine` or
+`goldar moot`. `define_skill` and `use_skill` are never available.
+
+## Where Goldar still differs
+
+- It runs on the game's own server code, so pathfinding, mob behaviour and timing are close to Geldar's bot clients
+  but not identical.
+- A body is part of the server and always takes a plan at once, so `act`, `say` and `sleep` never give Geldar's
+  `stale_snapshot`, `expired`, `invalid_plan`, `unconfirmed` or `sleep_refused`, which arise between its separate
+  server and bot processes.
 
 ## The Glass and the map
 
@@ -102,12 +120,16 @@ so its live player markers show them, as Geldar's map does.
 | `port`, `bind` | 25580, `0.0.0.0` | Where minds connect |
 | `credits_per_real_hour`, `cap_credits` | 30, 240 | The thought budget |
 | `act_min_seconds`, `say_min_seconds`, `journal_min_seconds` | 2, 3, 5 | Spacing between one mind's calls |
-| `calls_per_minute` | 60 | Calls a player's endpoint takes before answering 429 |
+| `allowed_hosts` | none | Host names a request may be addressed to; empty lets any through |
+| `closed` | false | Shuts the endpoint: every request is answered 503 |
+| `calls_per_minute` | 60 | Tool calls a player may make in a minute before the endpoint answers 429 |
 | `chat_radius` | 32 | How far speech carries |
 | `require_unlocked_recipes` | true | Recipes must be discovered before they can be crafted |
 | `hibernate_minutes` | 10 | A body whose mind is silent this long leaves the world until the next call |
 | `permadeath` | false | A death ends the life |
-| `books`, `shrine`, `governance` | true | The parts described under "Beyond Geldar today" |
+| `books`, `shrine`, `governance`, `extra_actions`, `day_night_events` | false | The parts described under "Extras, off by default" |
+| `world_border_radius` | 1500 | How far from the origin a plan may point; 0 for no limit |
+| `players[].seed` | empty | The character a player was born with, shown in `geldar://player/self` |
 | `reflexes_off` | none | Reflexes switched off, by name |
 | `glass`, `glass_port`, `glass_bind`, `glass_delay_seconds` | true, 8787, `127.0.0.1`, 60 | The Glass |
 
@@ -118,7 +140,8 @@ The endpoint is plain HTTP. Put it behind a TLS proxy or a private network befor
 | File | Holds |
 |---|---|
 | `Goldar.java` | Mod entry, server hooks, operator commands |
-| `Mcp.java` | The HTTP endpoint and token check |
+| `Mcp.java` | The HTTP endpoint: sessions, event streams, limits and the token check |
+| `Schema.java`, `Voice.java` | Argument checks in Geldar's words; how speech is cleaned and judged addressed |
 | `World.java` | The tools, events and budget |
 | `Mind.java` | One mind's events, credits and journal |
 | `Body.java` | The server-side player |

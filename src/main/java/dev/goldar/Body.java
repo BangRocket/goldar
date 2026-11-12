@@ -109,11 +109,14 @@ public final class Body extends ServerPlayer {
     }
 
     @Override public boolean hurtServer(ServerLevel level, DamageSource source, float damage) {
-        float before = getHealth();
+        float before = getHealth() + getAbsorptionAmount();
         boolean hurt = super.hurtServer(level, source, damage);
-        if (hurt && getHealth() < before) {
-            lastHurtTick = tickCount;
-            Goldar.world().onHurt(mind, source, before - getHealth());
+        if (hurt) {
+            float lost = before - (getHealth() + getAbsorptionAmount());
+            if (lost > 0) lastHurtTick = tickCount;
+            // Each blow is news, the ones armour took whole among them.
+            if (isAlive()) Goldar.world().onHurt(mind, this, lost);
+            else Goldar.world().onKilled(mind, lost);
         }
         return hurt;
     }

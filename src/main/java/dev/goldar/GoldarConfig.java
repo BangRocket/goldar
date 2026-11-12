@@ -21,6 +21,8 @@ public final class GoldarConfig {
         public String id;
         public String name;
         public String token_sha256;
+        /** The character this player was born with, as `geldar://player/self` tells it. May be empty. */
+        public String seed = "";
         /** Set when the life ended; the body is not woken again until an operator revives it. */
         public boolean ended;
     }
@@ -37,12 +39,22 @@ public final class GoldarConfig {
     public int chat_radius = 32;
     /** The least time between one mind's acts, says and journal lines, in seconds. */
     public double act_min_seconds = 2, say_min_seconds = 3, journal_min_seconds = 5;
+    /** Host names a request may be addressed to. Empty lets any through. */
+    public List<String> allowed_hosts = new ArrayList<>();
+    /** The switch that shuts the endpoint: every request is answered 503 while it is set. */
+    public boolean closed = false;
     /** How many calls a minute one player's endpoint takes before it answers 429. */
     public int calls_per_minute = 60;
     /** When true a death ends the life; otherwise the body comes back at the spawn as a player would. */
     public boolean permadeath = false;
-    /** Parts of the world that can be closed, after which their tools answer "not available". */
-    public boolean books = true, shrine = true, governance = true;
+    /**
+     * Parts of the world Geldar describes but does not open yet. They are closed here too unless switched on: books a
+     * mind can write, the Shrine, the Moot Stone, the `give`, `build`, `write_sign` and `note` actions with the
+     * `build` and `follow` programs, and word of dusk and dawn.
+     */
+    public boolean books = false, shrine = false, governance = false, extra_actions = false, day_night_events = false;
+    /** How far from the origin a plan may point, as Geldar's world border sets it. 0 for no limit. */
+    public int world_border_radius = 1500;
     /** Reflexes switched off, by name. */
     public java.util.Set<String> reflexes_off = new java.util.HashSet<>();
     /** The Glass: the page people watch from. It is never shown to minds. */
