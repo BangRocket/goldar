@@ -695,14 +695,16 @@ public final class Tasks {
                 hut = Colonies.settle(at);
                 return hut.tick(b);
             }
-            if (!Set.of("chest", "trapped_chest", "barrel").contains(Body.name(level(b).getBlockState(at))) || !(level(b).getBlockEntity(at) instanceof Container)) {
+            // A hut and a colony's rack keep a store too, behind a button of their window.
+            boolean store = Colonies.isStore(b, at);
+            if (!store && (!Set.of("chest", "trapped_chest", "barrel").contains(Body.name(level(b).getBlockState(at))) || !(level(b).getBlockEntity(at) instanceof Container))) {
                 return Outcome.fail("not_found", "no container at that position");
             }
             if (walk == null) walk = new Walk(at, 3);
             Outcome o = walk.tick(b);
             if (o == null) return null;
             if (!o.ok()) return o;
-            var menu = Menus.open(b, at);
+            var menu = store ? Colonies.openStore(b, at) : Menus.open(b, at);
             if (menu == null) return Outcome.fail("blocked", "the container would not open");
             try {
                 java.util.function.Predicate<Slot> mine = s -> Menus.own(b, s), box = s -> s.container != b.getInventory();

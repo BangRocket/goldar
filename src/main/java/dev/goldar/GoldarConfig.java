@@ -57,6 +57,8 @@ public final class GoldarConfig {
     public int world_border_radius = 1500;
     /** With MineColonies installed: the building style of a colony a body founds. Empty takes the first installed. */
     public String colony_style = "";
+    /** With MineColonies installed: every mind is an officer of each colony a mind owns, so they can build one town together. */
+    public boolean colony_shared = true;
     /** Reflexes switched off, by name. */
     public java.util.Set<String> reflexes_off = new java.util.HashSet<>();
     /** The Glass: the page people watch from. It is never shown to minds. */

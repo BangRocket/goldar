@@ -12,4 +12,18 @@ final class Colonies {
     static Tasks.Task hut(String block, BlockPos at) { throw new UnsupportedOperationException(); }
 
     static Tasks.Task settle(BlockPos at) { throw new UnsupportedOperationException(); }
+
+    static boolean isStore(Body b, BlockPos at) { return false; }
+
+    static net.minecraft.world.inventory.AbstractContainerMenu openStore(Body b, BlockPos at) { throw new UnsupportedOperationException(); }
+
+    static java.util.Set<String> verbs() { return java.util.Set.of(); }
+
+    static String actions() { return null; }
+
+    static final String ACTIONS_NOTE = "";
+
+    static Tasks.Task manage(String verb, BlockPos at, String what, String value) { throw new UnsupportedOperationException(); }
+
+    static void woke(Body b) {}
 }

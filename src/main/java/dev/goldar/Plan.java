@@ -171,9 +171,11 @@ public final class Plan {
     /** The task for one immediate action. */
     public static Task action(JsonObject a, Mind mind, GoldarConfig config) throws Rejected {
         String verb = str(a, "do");
-        if (!VERBS.contains(verb) && !(config.extra_actions && EXTRA_VERBS.contains(verb))) throw new Rejected("not_allowed");
+        if (!VERBS.contains(verb) && !(config.extra_actions && EXTRA_VERBS.contains(verb)) && !Colonies.verbs().contains(verb)) throw new Rejected("not_allowed");
         int border = config.world_border_radius;
         Task task = switch (verb) {
+            case "hire", "dismiss" -> Tasks.within(Colonies.manage(verb, pos(a.get("at"), border), str(a, "citizen"), null), 600, "timeout", verb + " took too long");
+            case "set" -> Tasks.within(Colonies.manage(verb, pos(a.get("at"), border), str(a, "setting"), str(a, "value")), 600, "timeout", verb + " took too long");
             case "goto" -> walkTo(a.get("target"), border);
             case "mine" -> new Tasks.Mine(str(a, "block"), num(a, "count", 1, 256));
             case "craft" -> new Crafting.Craft(str(a, "item"), num(a, "count", 1, 64));

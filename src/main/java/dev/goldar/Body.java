@@ -39,7 +39,7 @@ public final class Body extends BodyBase {
     /** Puts the mind's body into the world, where it was when it last left, or at the world spawn. Server thread only. */
     public static Body wake(MinecraftServer server, Mind mind) {
         String name = mind.seat.name;
-        UUID id = UUID.nameUUIDFromBytes(("Goldar:" + mind.seat.id).getBytes(StandardCharsets.UTF_8));
+        UUID id = uuid(mind.seat.id);
         ServerLevel level = server.overworld();
         Body body = new Body(server, level, new GameProfile(id, name), mind);
         boolean saved = body.loadSaved(server);
@@ -55,9 +55,32 @@ public final class Body extends BodyBase {
             BlockPos spawn = body.adjustSpawnLocation(level, Compat.worldSpawn(level));
             body.snap(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
         }
+        // One body for one mind: a copy still in the world, however it came to be there, leaves before this one enters.
+        for (var old = server.getPlayerList().getPlayer(id); old != null; old = server.getPlayerList().getPlayer(id)) server.getPlayerList().remove(old);
         server.getPlayerList().placeNewPlayer(noConnection(), body, CommonListenerCookie.createInitial(body.getGameProfile(), false));
+        // Placing a player can read its saved data again, and a body saved at its death is dead still: it rises as a respawn would have it.
+        if (body.isDeadOrDying()) body.rise(level);
+        Colonies.woke(body);
         return body;
     }
+
+    /** Brings a dead body back at the world spawn with full health, as a respawn does. What it carried fell where it died. */
+    private void rise(ServerLevel level) {
+        BlockPos spawn = adjustSpawnLocation(level, Compat.worldSpawn(level));
+        setHealth(getMaxHealth());
+        deathTime = 0;
+        getFoodData().setFoodLevel(20);
+        getFoodData().setSaturation(5f);
+        removeAllEffects();
+        clearFire();
+        setDeltaMovement(Vec3.ZERO);
+        fallDistance = 0;
+        setPose(net.minecraft.world.entity.Pose.STANDING);
+        snap(spawn.getX() + 0.5, spawn.getY(), spawn.getZ() + 0.5);
+    }
+
+    /** The game id of the body a player's mind lives in. */
+    public static UUID uuid(String playerId) { return UUID.nameUUIDFromBytes(("Goldar:" + playerId).getBytes(StandardCharsets.UTF_8)); }
 
     /** Takes the body out of the world and saves it. Server thread only. */
     public void rest() {

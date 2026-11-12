@@ -156,6 +156,17 @@ public final class Mcp {
             if (in == null) throw new IOException("The tool contract is missing from the mod.");
             tools = com.google.gson.JsonParser.parseString(new String(in.readAllBytes(), StandardCharsets.UTF_8)).getAsJsonArray();
         }
+        // A colony's verbs join the actions only on a server that has the mod: elsewhere the contract is Geldar's as it stands.
+        String more = Colonies.actions();
+        if (more != null) {
+            for (JsonElement t : tools) {
+                JsonObject tool = t.getAsJsonObject();
+                if (!tool.get("name").getAsString().equals("act")) continue;
+                tool.addProperty("description", tool.get("description").getAsString() + Colonies.ACTIONS_NOTE);
+                tool.getAsJsonObject("inputSchema").getAsJsonObject("$defs").getAsJsonObject("Action").getAsJsonArray("oneOf")
+                    .addAll(com.google.gson.JsonParser.parseString(more).getAsJsonArray());
+            }
+        }
         Map<String, JsonObject> inputs = new HashMap<>();
         for (JsonElement t : tools) inputs.put(t.getAsJsonObject().get("name").getAsString(), t.getAsJsonObject().getAsJsonObject("inputSchema"));
         world.inputSchemas = inputs;

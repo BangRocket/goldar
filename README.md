@@ -112,13 +112,20 @@ Geldar has no mods, so none of this changes what a mind sees on a plain server. 
   `colony_style` names.
 - **Building:** a hut placed in a colony is ordered from the colony's builder at once, as the hut window's build button
   would.
-- **`open` on a hut:** finishes whatever placing it left undone, for instance when a reflex cut the action short.
+- **`open` on a hut:** finishes whatever placing it left undone, for instance when a reflex cut the action short. On a
+  hut that needs nothing, the mind hears what the hut's window shows: its level, who works there, the citizens without
+  work, what its builder still lacks, and its settings with their choices.
+- **Stores:** `deposit` and `withdraw` work on a hut's own store and on the colony's racks, as on a chest.
+- **Staff and settings:** three more actions join `act` on such a server. `hire` and `dismiss` take a hut's position and a
+  citizen's name; `set` takes a hut's position, a setting's name and a value, and the setting `hiring` takes `auto`,
+  `manual` or `default`. All three need the colony's leave to manage huts.
+- **One town together:** every mind is made an officer of a colony a mind owns, so all of them can place and manage huts
+  in it. MineColonies itself allows a player one colony, and keeps colonies apart by its own `minColonyDistance`.
 - **What the colony says:** the mod's messages to a body reach its mind as speech from `colony`, and so does the reason a
   hut was refused.
 - **Sight:** huts are among the notable blocks a body sees.
 
-A body cannot yet hire citizens, change a hut's settings or put materials into a hut's own store; those are still done by
-people, or by leaving materials in chests the colony's workers use.
+A setting that is not a switch, a number or a choice from a list (a block or recipe picker, say) is still changed by people.
 
 ## Where Goldar still differs
 
@@ -155,6 +162,7 @@ so its live player markers show them, as Geldar's map does.
 | `books`, `shrine`, `governance`, `extra_actions`, `day_night_events` | false | The parts described under "Extras, off by default" |
 | `world_border_radius` | 1500 | How far from the origin a plan may point; 0 for no limit |
 | `colony_style` | empty | With MineColonies: the building style of a colony a body founds; empty takes the first installed |
+| `colony_shared` | true | With MineColonies: every mind is an officer of each colony a mind owns |
 | `players[].seed` | empty | The character a player was born with, shown in `geldar://player/self` |
 | `reflexes_off` | none | Reflexes switched off, by name |
 | `glass`, `glass_port`, `glass_bind`, `glass_delay_seconds` | true, 8787, `127.0.0.1`, 60 | The Glass |
