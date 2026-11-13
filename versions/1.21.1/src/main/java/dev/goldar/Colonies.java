@@ -32,6 +32,15 @@ final class Colonies {
     /** True for a hut or a colony rack, whose store opens from a window button and not by a click. */
     static boolean isStore(Body b, BlockPos at) { return present() && ColoniesImpl.isStore(b, at); }
 
+    /** Where a hut keeps things: its own block first, then the racks of its building. A lone rack is just itself. */
+    static java.util.List<BlockPos> storesOf(Body b, BlockPos at) { return present() ? ColoniesImpl.storesOf(b, at) : java.util.List.of(at); }
+
+    /**
+     * How many of an item a hut takes: what its builder still lacks of it, none when the item is not on the builder's
+     * list, and no limit when the hut has no builder's list.
+     */
+    static int takes(Body b, BlockPos at, String item) { return present() ? ColoniesImpl.takes(b, at, item) : Integer.MAX_VALUE; }
+
     /** Opens a hut's or rack's store as that button does. Null when the colony does not allow it. */
     static net.minecraft.world.inventory.AbstractContainerMenu openStore(Body b, BlockPos at) { return ColoniesImpl.openStore(b, at); }
 

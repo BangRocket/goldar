@@ -34,7 +34,7 @@ final class Skills {
 
     /** Each skill's arguments, as the contract describes them to a mind. */
     static final Map<String, String> ARGS = Map.of(
-        "chop", "count (logs, default 8), radius (default 48)",
+        "chop", "count (logs, default 8), radius (default 48), kind (a wood such as oak or jungle; default any)",
         "bootstrap", "none: logs, planks, sticks, a crafting table, wooden pickaxe and sword, dirt, then a stone pickaxe",
         "strip_mine", "length (default 32), y (dig down to this level first), dir (x, -x, z or -z, default x), stay (true to stay underground); takes ores, places torches, then climbs back up",
         "smelt", "item (what to make, such as iron_ingot), count; places a furnace when none is near",
@@ -81,7 +81,13 @@ final class Skills {
     /** The task for a skill, its arguments checked first. */
     static Task program(String skill, JsonObject args, int border) throws Plan.Rejected {
         return switch (skill) {
-            case "chop" -> { only(args, "count", "radius"); yield new Chop(num(args, "count", 1, 256, 8), num(args, "radius", 8, 64, 48)); }
+            case "chop" -> {
+                only(args, "count", "radius", "kind");
+                String kind = name(args, "kind", null);
+                if (kind != null && !kind.matches("^[a-z_]{2,32}$")) throw new Plan.Rejected("schema");
+                if (kind != null && kind.endsWith("_log")) kind = kind.substring(0, kind.length() - 4);
+                yield new Chop(num(args, "count", 1, 256, 8), num(args, "radius", 8, 64, 48), kind);
+            }
             case "bootstrap" -> { only(args); yield bootstrap(); }
             case "strip_mine" -> {
                 only(args, "length", "y", "dir", "stay");
@@ -477,14 +483,20 @@ final class Skills {
     /** Mines the nearest logs until `want` more are carried, searching further out when no tree is in range. */
     static final class Chop implements Task {
         private final int want, radius;
+        /** The logs it takes: every kind, or one such as oak_log. */
+        private final String logs;
         private int start = -1, failures, leg;
         private boolean searching;
         private Task doing;
 
-        Chop(int want, int radius) { this.want = want; this.radius = radius; }
+        Chop(int want, int radius) { this(want, radius, null); }
+
+        Chop(int want, int radius, String kind) { this.want = want; this.radius = radius; this.logs = kind == null ? "*_log" : kind + "_log"; }
+
+        private boolean log(String name) { return logs.equals("*_log") ? name.endsWith("_log") : name.equals(logs); }
 
         @Override public Outcome tick(Body b) {
-            if (start < 0) start = count(b, "*_log");
+            if (start < 0) start = count(b, logs);
             if (doing != null) {
                 Outcome o = doing.tick(b);
                 if (o == null) return null;
@@ -492,7 +504,7 @@ final class Skills {
                 if (!o.ok() && !searching) {
                     // The trees here could not be got at: look further out before trying again.
                     failures++;
-                    if (count(b, "*_log") - start < want && failures < 4) {
+                    if (count(b, logs) - start < want && failures < 4) {
                         searching = true;
                         doing = scout(b, leg++);
                         if (doing != null) return null;
@@ -500,17 +512,17 @@ final class Skills {
                 }
                 searching = false;
             }
-            if (count(b, "*_log") - start >= want) return Outcome.OK;
+            if (count(b, logs) - start >= want) return Outcome.OK;
             if (failures >= 4) return Outcome.fail("not_possible", "could not get at the logs nearby");
             BlockPos log = BlockPos.findClosestMatch(b.blockPosition(), radius, Math.min(radius, 16),
-                p -> Body.name(b.level().getBlockState(p)).endsWith("_log") && withinReachOfGround(b.level(), p)).orElse(null);
+                p -> log(Body.name(b.level().getBlockState(p))) && withinReachOfGround(b.level(), p)).orElse(null);
             if (log != null) {
                 // One mining task for every kind of log, so a log it cannot get at is passed over rather than tried again.
-                doing = new Tasks.Mine("log", n -> n.endsWith("_log"), want - (count(b, "*_log") - start), radius, null, 0).onlyWhere(Skills::withinReachOfGround);
+                doing = new Tasks.Mine(logs.equals("*_log") ? "log" : logs, this::log, want - (count(b, logs) - start), radius, null, 0).onlyWhere(Skills::withinReachOfGround);
                 return null;
             }
             doing = scout(b, leg++);
-            return doing == null ? Outcome.fail("not_found", "no trees found after searching") : null;
+            return doing == null ? Outcome.fail("not_found", "no " + (logs.equals("*_log") ? "trees" : logs) + " found after searching") : null;
         }
 
         @Override public void stop(Body b) { if (doing != null) doing.stop(b); else b.halt(); }

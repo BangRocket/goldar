@@ -257,6 +257,45 @@ final class ColoniesImpl {
 
     static boolean isStore(Body b, BlockPos at) { return b.level().getBlockEntity(at) instanceof TileEntityRack; }
 
+    static List<BlockPos> storesOf(Body b, BlockPos at) {
+        List<BlockPos> stores = new ArrayList<>(List.of(at));
+        IColony colony = IColonyManager.getInstance().getColonyByPosFromWorld(b.level(), at);
+        IBuilding building = colony == null ? null : colony.getServerBuildingManager().getBuilding(at);
+        if (building == null) return stores;
+        for (BlockPos p : building.getContainers()) {
+            if (!p.equals(at) && b.level().getBlockEntity(p) instanceof TileEntityRack) stores.add(p.immutable());
+        }
+        return stores;
+    }
+
+    static int takes(Body b, BlockPos at, String item) {
+        IColony colony = IColonyManager.getInstance().getColonyByPosFromWorld(b.level(), at);
+        IBuilding building = colony == null ? null : colony.getServerBuildingManager().getBuilding(at);
+        if (building == null) return Integer.MAX_VALUE;
+        boolean listed = false;
+        int missing = 0;
+        for (BuildingResourcesModule needs : building.getModules(BuildingResourcesModule.class)) {
+            for (BuildingBuilderResource r : needs.getNeededResources().values()) {
+                listed = true;
+                if (Body.name(r.getItemStack()).equals(item)) missing += Math.max(0, r.getAmount() - r.getAvailable());
+            }
+        }
+        return listed ? missing : Integer.MAX_VALUE;
+    }
+
+    /** How full a hut's store is, its racks counted in: "N of M slots used in the hut and K racks". */
+    private static String storeFill(Body b, BlockPos at) {
+        int used = 0, slots = 0, racks = -1;
+        for (BlockPos p : storesOf(b, at)) {
+            if (!(b.level().getBlockEntity(p) instanceof TileEntityRack rack)) continue;
+            racks++;
+            var inv = rack.getInventory();
+            slots += inv.getSlots();
+            for (int i = 0; i < inv.getSlots(); i++) if (!inv.getStackInSlot(i).isEmpty()) used++;
+        }
+        return "Store: " + used + " of " + slots + " slots used in the hut" + (racks > 0 ? " and its " + racks + " racks" : "") + (used >= slots ? ", full." : ".");
+    }
+
     /** Opens the store as the window's inventory button does. Null when the colony does not let this body in. */
     static AbstractContainerMenu openStore(Body b, BlockPos at) {
         Menus.close(b);
@@ -349,11 +388,28 @@ final class ColoniesImpl {
         if (!jobs.isEmpty() || building.getBuildingDisplayName().contains("townhall")) list(lines, "Citizens without work: ", idle(colony), ", ");
         for (BuildingResourcesModule needs : building.getModules(BuildingResourcesModule.class)) {
             List<String> parts = new ArrayList<>();
+            java.util.Set<String> wanted = new java.util.HashSet<>();
             for (BuildingBuilderResource r : needs.getNeededResources().values()) {
+                wanted.add(Body.name(r.getItemStack()));
                 int missing = r.getAmount() - r.getAvailable();
                 if (missing > 0) parts.add(missing + " " + Body.name(r.getItemStack()));
             }
             list(lines, "The builder still needs: ", parts, ", ");
+            // What fills the store without being on the builder's list only takes room the list needs.
+            if (!wanted.isEmpty()) {
+                Map<String, Integer> spare = new java.util.TreeMap<>();
+                for (BlockPos p : storesOf(b, at)) {
+                    if (!(b.level().getBlockEntity(p) instanceof TileEntityRack rack)) continue;
+                    var inv = rack.getInventory();
+                    for (int i = 0; i < inv.getSlots(); i++) {
+                        var s = inv.getStackInSlot(i);
+                        if (!s.isEmpty() && !wanted.contains(Body.name(s))) spare.merge(Body.name(s), s.getCount(), Integer::sum);
+                    }
+                }
+                List<String> extra = new ArrayList<>();
+                spare.forEach((name, n) -> extra.add(n + " " + name));
+                list(lines, "Not on the builder's list (withdraw to make room): ", extra, ", ");
+            }
         }
         List<String> set = new ArrayList<>();
         for (SettingsModule module : building.getModules(SettingsModule.class)) {
@@ -363,6 +419,7 @@ final class ColoniesImpl {
             }
         }
         list(lines, "Settings: ", set, "; ");
+        lines.add(storeFill(b, at));
         for (String line : lines) Goldar.world().told(b, "colony", line);
     }
 

@@ -103,7 +103,7 @@ switch them on in the config.
   |---|---|---|
   | `plan` | `rounds` (30), `mine_y` (16) | From nothing to an iron pickaxe, sword and full iron armour, doing the first step still needed each round |
   | `bootstrap` | none | Logs, planks, sticks, a crafting table, wooden pickaxe and sword, dirt for a night, then a stone pickaxe |
-  | `chop` | `count` (8), `radius` (48) | Fells the nearest trees, searching further out when none is in range |
+  | `chop` | `count` (8), `radius` (48), `kind` | Fells the nearest trees, of one wood if `kind` names it (`oak`, `jungle`...), searching further out when none is in range |
   | `strip_mine` | `length` (32), `y`, `dir` (`x`), `stay` | Digs down to `y` as a staircase, then a two-high tunnel, taking ores in reach and setting torches; keeps clear of lava; climbs back to the surface afterwards unless `stay` is true |
   | `smelt` | `item`, `count` (8) | Smelts in a nearby furnace, crafting and setting one down if needed |
   | `cook` | none | Cooks all carried raw meat, fish and potatoes |
@@ -131,8 +131,13 @@ Geldar has no mods, so none of this changes what a mind sees on a plain server. 
   would.
 - **`open` on a hut:** finishes whatever placing it left undone, for instance when a reflex cut the action short. On a
   hut that needs nothing, the mind hears what the hut's window shows: its level, who works there, the citizens without
-  work, what its builder still lacks, and its settings with their choices.
-- **Stores:** `deposit` and `withdraw` work on a hut's own store and on the colony's racks, as on a chest.
+  work, what its builder still lacks, what its store holds that the builder does not need, how full the store is, and its
+  settings with their choices.
+- **Stores:** `deposit` and `withdraw` work on a hut's own store and on the colony's racks, as on a chest. What goes into
+  a hut fills its own block, then the racks its building holds; a rack set down by hand belongs to no building, as in
+  MineColonies itself.
+- **What a builder takes:** a hut whose builder has a list of needs takes only what is on that list, and no more of it
+  than is still lacking; the rest stays with the body, and the colony says why.
 - **Staff and settings:** three more actions join `act` on such a server. `hire` and `dismiss` take a hut's position and a
   citizen's name; `set` takes a hut's position, a setting's name and a value, and the setting `hiring` takes `auto`,
   `manual` or `default`. All three need the colony's leave to manage huts.
@@ -140,7 +145,7 @@ Geldar has no mods, so none of this changes what a mind sees on a plain server. 
   in it. MineColonies itself allows a player one colony, and keeps colonies apart by its own `minColonyDistance`.
 - **What the colony says:** the mod's messages to a body reach its mind as speech from `colony`, and so does the reason a
   hut was refused.
-- **Sight:** huts are among the notable blocks a body sees.
+- **Sight:** huts and racks are among the notable blocks a body sees.
 
 A setting that is not a switch, a number or a choice from a list (a block or recipe picker, say) is still changed by people.
 

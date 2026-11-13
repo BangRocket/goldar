@@ -832,7 +832,8 @@ public final class Tasks {
             Outcome o = walk.tick(b);
             if (o == null) return null;
             if (!o.ok()) return o;
-            var menu = store ? Colonies.openStore(b, at) : Menus.open(b, at);
+            if (store) return throughStores(b);
+            var menu = Menus.open(b, at);
             if (menu == null) return Outcome.fail("blocked", "the container would not open");
             try {
                 java.util.function.Predicate<Slot> mine = s -> Menus.own(b, s), box = s -> s.container != b.getInventory();
@@ -858,6 +859,58 @@ public final class Tasks {
             } finally {
                 Menus.close(b);
             }
+        }
+
+        /**
+         * A hut's store is its own block and the racks its building holds: what goes into a hut fills the block, then
+         * the racks, as a player would put it away; what is taken comes from wherever it lies among them.
+         */
+        private Outcome throughStores(Body b) {
+            List<BlockPos> stores = Colonies.storesOf(b, at);
+            java.util.function.Predicate<Slot> mine = s -> Menus.own(b, s), box = s -> s.container != b.getInventory();
+            java.util.function.Predicate<ItemStack> wantedItem = s -> Body.name(s).equals(item);
+            if (kind == Kind.OPEN) {
+                boolean opened = Colonies.openStore(b, at) != null;
+                Menus.close(b);
+                return opened ? Outcome.OK : Outcome.fail("blocked", "the container would not open");
+            }
+            if (kind == Kind.DEPOSIT && b.count(item) < count) return Outcome.fail("missing_materials", "inventory has only " + b.count(item) + " " + item);
+            // A builder's hut takes what is on its builder's list, and no more of it than is still lacking: the rest stays carried.
+            int wanted = count;
+            if (kind == Kind.DEPOSIT) {
+                int takes = Colonies.takes(b, at, item);
+                if (takes <= 0) {
+                    Goldar.world().told(b, "colony", "The builder does not need " + item + "; you keep it. Open the hut to see what it needs.");
+                    return Outcome.fail("not_possible", "the builder does not need " + item);
+                }
+                if (takes < count) {
+                    wanted = takes;
+                    Goldar.world().told(b, "colony", "The builder needs only " + takes + " more " + item + "; you keep the other " + (count - takes) + ".");
+                }
+            }
+            if (kind == Kind.WITHDRAW) {
+                int there = 0;
+                for (BlockPos p : stores) {
+                    var menu = Colonies.openStore(b, p);
+                    if (menu == null) continue;
+                    for (Slot s : menu.slots) if (box.test(s) && s.hasItem() && wantedItem.test(s.getItem())) there += s.getItem().getCount();
+                    Menus.close(b);
+                }
+                if (there < count) return Outcome.fail("not_found", "the hut and its racks hold only " + there + " " + item);
+            }
+            int moved = 0;
+            for (BlockPos p : stores) {
+                if (moved >= wanted) break;
+                if (Colonies.openStore(b, p) == null) continue;
+                try {
+                    moved += kind == Kind.DEPOSIT ? Menus.move(b, mine, box, wantedItem, wanted - moved) : Menus.move(b, box, mine, wantedItem, wanted - moved);
+                } finally {
+                    Menus.close(b);
+                }
+            }
+            if (moved >= wanted) return Outcome.OK;
+            if (kind == Kind.DEPOSIT) return Outcome.fail("not_possible", "the hut and its racks are full: " + moved + " of " + wanted + " " + item + " put away");
+            return Outcome.fail(moved == 0 ? "not_found" : "not_possible", "moved " + moved + " of " + count + " " + item);
         }
     }
 }

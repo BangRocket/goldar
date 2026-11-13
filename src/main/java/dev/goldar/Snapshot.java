@@ -41,7 +41,7 @@ public final class Snapshot {
     private static final String[] COMPASS = {"north", "north_east", "east", "south_east", "south", "south_west", "west", "north_west"};
     /** The kinds worth telling a mind about, in groups; the nearest few of each group are looked at. A colony's huts are among them. */
     private static final List<Predicate<String>> GROUPS = List.of(
-        n -> n.endsWith("_bed"), n -> n.startsWith("blockhut"), n -> n.equals("chest") || n.equals("barrel"), n -> n.equals("crafting_table") || n.equals("furnace"),
+        n -> n.endsWith("_bed"), n -> n.startsWith("blockhut") || n.equals("blockminecoloniesrack"), n -> n.equals("chest") || n.equals("barrel"), n -> n.equals("crafting_table") || n.equals("furnace"),
         n -> n.endsWith("_log"), n -> n.matches("^(deepslate_)?(coal|iron)_ore$"), n -> n.equals("water"), n -> n.equals("lava"), Snapshot::isSign);
     /** The natural blocks counted nearby, in the order the count reads. */
     private static final List<String> COUNTED = new ArrayList<>();
