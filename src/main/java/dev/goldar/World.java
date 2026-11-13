@@ -334,7 +334,8 @@ public final class World {
 
     private boolean open(String tool) {
         return switch (tool) {
-            case "define_skill", "use_skill" -> false;
+            case "define_skill" -> false;
+            case "use_skill" -> config.skills;
             case "write_book" -> config.books;
             case "offer" -> config.shrine;
             case "propose", "vote" -> config.governance;
@@ -382,6 +383,7 @@ public final class World {
             case "journal": return journal(mind, args);
             case "say": return say(mind, args);
             case "act": return act(mind, args);
+            case "use_skill": return useSkill(mind, args);
             case "wait": return await(mind, args);
             default: break;
         }
@@ -461,6 +463,15 @@ public final class World {
         JsonObject out = J.obj("spoken", reason == null, "budget_remaining_thoughts", mind.credits(config));
         if (reason != null) out.addProperty("reason", reason);
         return Reply.ok(out, reason == null ? 1 : 0);
+    }
+
+    /** Runs a skill the body knows as its intent: what `act` does for an intent whose program is that skill. */
+    private Reply useSkill(Mind mind, JsonObject args) throws Exception {
+        String name = args.get("name").getAsString();
+        if (!Skills.known(name)) return Reply.refuse("unknown_skill", "No skill is called " + name + ". Known: " + String.join(", ", Skills.ARGS.keySet()) + ".");
+        JsonObject intent = J.obj("goal", name.toLowerCase(java.util.Locale.ROOT), "program", name, "arguments", args.getAsJsonObject("args"),
+            "wake_on", J.arr(List.of("goal_completed")), "limits", J.obj("max_world_ticks", 72000, "max_block_operations", 5000));
+        return act(mind, J.obj("intent", intent));
     }
 
     private Reply act(Mind mind, JsonObject args) throws Exception {

@@ -60,12 +60,17 @@ public final class Tasks {
         return false;
     }
 
-    /** True when nothing solid stands between the body's eyes and the block. */
+    /** True when the body's eyes can see some part of the block: its centre or the middle of one of its faces. */
     static boolean inSight(Body b, BlockPos p) {
         Vec3 eyes = b.getEyePosition(), centre = Vec3.atCenterOf(p);
-        var hit = level(b).clip(new net.minecraft.world.level.ClipContext(eyes, centre, net.minecraft.world.level.ClipContext.Block.COLLIDER,
-            net.minecraft.world.level.ClipContext.Fluid.NONE, b));
-        return hit.getType() == net.minecraft.world.phys.HitResult.Type.MISS || hit.getBlockPos().equals(p);
+        List<Vec3> aims = new java.util.ArrayList<>(List.of(centre));
+        for (Direction d : Direction.values()) aims.add(centre.add(Compat.unit(d).scale(0.45)));
+        for (Vec3 aim : aims) {
+            var hit = level(b).clip(new net.minecraft.world.level.ClipContext(eyes, aim, net.minecraft.world.level.ClipContext.Block.COLLIDER,
+                net.minecraft.world.level.ClipContext.Fluid.NONE, b));
+            if (hit.getType() == net.minecraft.world.phys.HitResult.Type.MISS || hit.getBlockPos().equals(p)) return true;
+        }
+        return false;
     }
     private static final int SEARCH = 32;
 
@@ -208,9 +213,22 @@ public final class Tasks {
         private int skipped;
         private static final int MAX_SKIPS = 8;
 
+        /** Which block names count: the one named, or a family such as every kind of log. */
+        private final java.util.function.Predicate<String> accepts;
+        /** Where a block may be taken from; a skill can rule out places no body could reach. */
+        private java.util.function.BiPredicate<ServerLevel, BlockPos> where = (l, p) -> true;
+
+        /** Only blocks at places `where` allows. */
+        Mine onlyWhere(java.util.function.BiPredicate<ServerLevel, BlockPos> where) { this.where = where; return this; }
+
         /** Mines `count` blocks. With `item` and `goal`, stops as soon as the inventory holds that many. */
         public Mine(String block, int count, int radius, String item, int goal) {
-            this.block = block; this.left = count; this.radius = radius; this.item = item; this.goal = goal;
+            this(block, block::equals, count, radius, item, goal);
+        }
+
+        /** Mines blocks of any name `accepts` takes; `label` names them in messages. */
+        Mine(String label, java.util.function.Predicate<String> accepts, int count, int radius, String item, int goal) {
+            this.block = label; this.accepts = accepts; this.left = count; this.radius = radius; this.item = item; this.goal = goal;
         }
 
         public Mine(String block, int count) { this(block, count, SEARCH, null, 0); }
@@ -252,13 +270,13 @@ public final class Tasks {
             }
             if (done(b)) { b.halt(); return Outcome.OK; }
             if (at == null) {
-                if (Compat.block(block).isEmpty()) {
+                if (accepts.test(block) && Compat.block(block).isEmpty()) {
                     return Outcome.fail("invalid_args", "unknown block " + block);
                 }
                 if (skipped > MAX_SKIPS) return Outcome.fail("not_found", "no " + block + " within " + radius + " that could be reached");
                 BlockPos under = b.blockPosition().below();
                 // A block beside water looks open, but mining it pours the water onto the body: those are left alone.
-                java.util.function.Predicate<BlockPos> match = p -> !tried.contains(p) && !p.equals(under) && Body.name(level.getBlockState(p)).equals(block) && !wet(level, p);
+                java.util.function.Predicate<BlockPos> match = p -> !tried.contains(p) && !p.equals(under) && accepts.test(Body.name(level.getBlockState(p))) && !wet(level, p) && where.test(level, p);
                 // A block open to the air comes first; a buried one is reached by digging a way to it.
                 Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius, p -> match.test(p) && exposed(level, p));
                 if (found.isEmpty()) found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius, match);
@@ -283,12 +301,12 @@ public final class Tasks {
                     walk = Walk.digging(at, 1);
                     return null;
                 }
-                if (!o.ok()) return skip();
+                if (!o.ok()) return skip(b, "no way to it (" + o.message() + ")");
             }
             // A block is broken only where the body can see it, so what it drops lands where the body can follow.
-            if (at.equals(b.blockPosition().below())) return skip();
+            if (at.equals(b.blockPosition().below())) return skip(b, "it is underfoot");
             if (b.getEyePosition().distanceTo(Vec3.atCenterOf(at)) > REACH || !inSight(b, at)) {
-                if (digging) return skip();
+                if (digging) return skip(b, "still out of reach or sight from " + b.blockPosition().toShortString());
                 digging = true;
                 walk = Walk.digging(at, 1);
                 return null;
@@ -306,7 +324,8 @@ public final class Tasks {
         }
 
         /** Leaves a block that could not be got at and looks for the next. */
-        private Outcome skip() {
+        private Outcome skip(Body b, String why) {
+            Goldar.LOGGER.debug("{}: mining passes over the {} at {}: {}", b.mind.seat.id, block, at.toShortString(), why);
             at = null;
             walk = null;
             digging = false;

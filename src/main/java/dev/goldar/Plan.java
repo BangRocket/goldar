@@ -474,7 +474,14 @@ public final class Plan {
         }
         Outcome o = intent.task.tick(b);
         if (o == null) return;
-        if (o.ok()) { endIntent(mind, b, tick, "completed", null); return; }
+        // A skill is this world's own addition, so it tells its mind how it ended in plain words.
+        boolean skill = Goldar.world().config.skills && Skills.known(intent.program);
+        if (o.ok()) {
+            if (skill) Goldar.world().told(b, "skill", intent.program + " finished.");
+            endIntent(mind, b, tick, "completed", null);
+            return;
+        }
+        if (skill) Goldar.world().told(b, "skill", intent.program + " stopped: " + (o.message() == null ? o.reason() : o.message()) + ".");
         if (intent.travelGoal == null && intent.task instanceof ToPlayer to) intent.travelGoal = to.at;
         if ("blocked".equals(o.reason()) && intent.travelGoal != null && !intent.detourTried) {
             // A blocked walk is handed to the body, which tries one way round before the mind hears of it.

@@ -48,7 +48,7 @@ final class Skills {
 
     /** What the contract's description of `act` gains when skills are on. */
     static String note() {
-        StringBuilder sb = new StringBuilder(" Skills you know, used as an intent's program with these arguments:");
+        StringBuilder sb = new StringBuilder(" Skills you know: start one with use_skill {name, args}, or as an intent's program with these arguments. A skill tells you how it ended, as speech from skill:");
         for (String name : List.of("plan", "bootstrap", "chop", "strip_mine", "smelt", "cook", "gather_food", "shelter", "store")) {
             sb.append(' ').append(name).append(" (").append(ARGS.get(name)).append(");");
         }
@@ -341,7 +341,26 @@ final class Skills {
         BlockPos from = b.blockPosition();
         BlockPos column = from.offset(SCOUT_LEGS[leg][0] * SCOUT_STEP, 0, SCOUT_LEGS[leg][1] * SCOUT_STEP);
         BlockPos ground = b.level().getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, column);
-        return Tasks.within(new Tasks.Walk(ground, 10), 20 * 90, "timeout", "the search walk took too long");
+        // Walk if there is a way; dig one if the body is shut in.
+        return orElse(Tasks.within(new Tasks.Walk(ground, 10), 20 * 90, "timeout", "the search walk took too long"),
+            x -> Tasks.within(Tasks.Walk.digging(ground, 10), 20 * 180, "timeout", "the search walk took too long"));
+    }
+
+    /** Runs `first`; if it fails, runs what `then` makes instead. */
+    static Task orElse(Task first, Function<Body, Task> then) {
+        return new Task() {
+            Task second;
+
+            @Override public Outcome tick(Body b) {
+                if (second != null) return second.tick(b);
+                Outcome o = first.tick(b);
+                if (o == null || o.ok()) return o;
+                second = then.apply(b);
+                return null;
+            }
+
+            @Override public void stop(Body b) { (second != null ? second : first).stop(b); }
+        };
     }
 
     /** Climbs to open sky above the body, digging a staircase if it must, in stages a walk can plan. Done at once on the surface. */
@@ -402,10 +421,23 @@ final class Skills {
 
     // ---- chop ----
 
+    /**
+     * True when a body standing on the ground beside the block could reach it. A trunk whose lower logs were cut
+     * hangs out of reach, and a body cannot build its way up to it.
+     */
+    static boolean withinReachOfGround(ServerLevel level, BlockPos p) {
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            int ground = level.getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, p.relative(d)).getY();
+            if (p.getY() - ground <= 4 && p.getY() >= ground - 3) return true;
+        }
+        return false;
+    }
+
     /** Mines the nearest logs until `want` more are carried, searching further out when no tree is in range. */
     static final class Chop implements Task {
         private final int want, radius;
         private int start = -1, failures, leg;
+        private boolean searching;
         private Task doing;
 
         Chop(int want, int radius) { this.want = want; this.radius = radius; }
@@ -416,14 +448,24 @@ final class Skills {
                 Outcome o = doing.tick(b);
                 if (o == null) return null;
                 doing = null;
-                if (!o.ok()) failures++;
+                if (!o.ok() && !searching) {
+                    // The trees here could not be got at: look further out before trying again.
+                    failures++;
+                    if (count(b, "*_log") - start < want && failures < 4) {
+                        searching = true;
+                        doing = scout(b, leg++);
+                        if (doing != null) return null;
+                    }
+                }
+                searching = false;
             }
             if (count(b, "*_log") - start >= want) return Outcome.OK;
-            if (failures >= 8) return Outcome.fail("not_possible", "could not get at the logs nearby");
-            BlockPos log = nearest(b, radius, n -> n.endsWith("_log"));
+            if (failures >= 4) return Outcome.fail("not_possible", "could not get at the logs nearby");
+            BlockPos log = BlockPos.findClosestMatch(b.blockPosition(), radius, Math.min(radius, 16),
+                p -> Body.name(b.level().getBlockState(p)).endsWith("_log") && withinReachOfGround(b.level(), p)).orElse(null);
             if (log != null) {
-                String kind = Body.name(b.level().getBlockState(log));
-                doing = new Tasks.Mine(kind, 1, radius, null, 0);
+                // One mining task for every kind of log, so a log it cannot get at is passed over rather than tried again.
+                doing = new Tasks.Mine("log", n -> n.endsWith("_log"), want - (count(b, "*_log") - start), radius, null, 0).onlyWhere(Skills::withinReachOfGround);
                 return null;
             }
             doing = scout(b, leg++);
