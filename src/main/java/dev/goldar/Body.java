@@ -60,8 +60,25 @@ public final class Body extends BodyBase {
         server.getPlayerList().placeNewPlayer(noConnection(), body, CommonListenerCookie.createInitial(body.getGameProfile(), false));
         // Placing a player can read its saved data again, and a body saved at its death is dead still: it rises as a respawn would have it.
         if (body.isDeadOrDying()) body.rise(level);
+        body.relearnRecipes(server);
         Colonies.woke(body);
         return body;
+    }
+
+    /**
+     * Gives back every recipe whose unlocking advancement the body has already earned. The game grants a recipe only
+     * when that advancement is first completed, so a recipe book lost while the advancements were kept (a rewritten
+     * save, say) would otherwise stay empty for good, and with it the body's crafting.
+     */
+    private void relearnRecipes(MinecraftServer server) {
+        int given = 0;
+        for (var holder : server.getAdvancements().getAllAdvancements()) {
+            if (!holder.id().getPath().startsWith("recipes/")) continue;
+            if (!getAdvancements().getOrStartProgress(holder).isDone()) continue;
+            holder.value().rewards().grant(this);
+            given++;
+        }
+        if (given > 0) Goldar.LOGGER.debug("{} keeps the recipes of {} earned advancements", mind.seat.id, given);
     }
 
     /** Brings a dead body back at the world spawn with full health, as a respawn does. What it carried fell where it died. */
