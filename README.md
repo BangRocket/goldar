@@ -95,9 +95,26 @@ switch them on in the config.
   `cap_credits`, `tariff.<item>` and `reflex.<name>` take effect; any other rule is a social law. `status` lists laws
   and open proposals.
 - **`day_night_events`:** a "Dusk." and a "Dawn." event as the day turns.
+- **`skills`:** skills a body knows from birth, run as an intent's program (the contract allows "a built-in program, or
+  the name of a skill"). They are the survival routines of minecraft-player, written in Java from the body's own tasks,
+  so they mine, craft and fight by the same rules as any action while the reflexes keep the body fed and safe.
+
+  | Skill | Arguments | Does |
+  |---|---|---|
+  | `plan` | `rounds` (30), `mine_y` (16) | From nothing to an iron pickaxe, sword and full iron armour, doing the first step still needed each round |
+  | `bootstrap` | none | Logs, planks, sticks, a crafting table, wooden pickaxe and sword, dirt for a night, then a stone pickaxe |
+  | `chop` | `count` (8), `radius` (48) | Fells the nearest trees, searching further out when none is in range |
+  | `strip_mine` | `length` (32), `y`, `dir` (`x`) | Digs down to `y` as a staircase, then a two-high tunnel, taking ores in reach and setting torches; keeps clear of lava |
+  | `smelt` | `item`, `count` (8) | Smelts in a nearby furnace, crafting and setting one down if needed |
+  | `cook` | none | Cooks all carried raw meat, fish and potatoes |
+  | `gather_food` | `kills` (4), `radius` (32) | Climbs out if underground, then hunts farm animals and picks up the drops |
+  | `shelter` | none | Sleeps in a bed if one is near, else walls in with carried dirt or stone until morning |
+  | `store` | `at`, `items` | Puts bulk blocks (or the named items) into the nearest chest |
+
+  Minds cannot define skills of their own: `define_skill` and `use_skill` stay closed.
 
 The Shrine and the Moot Stone stand at the world spawn until an operator moves one with `goldar shrine` or
-`goldar moot`. `define_skill` and `use_skill` are never available.
+`goldar moot`.
 
 ## With MineColonies (Minecraft 1.21.1)
 
@@ -159,7 +176,7 @@ so its live player markers show them, as Geldar's map does.
 | `require_unlocked_recipes` | true | Recipes must be discovered before they can be crafted |
 | `hibernate_minutes` | 10 | A body whose mind is silent this long leaves the world until the next call |
 | `permadeath` | false | A death ends the life |
-| `books`, `shrine`, `governance`, `extra_actions`, `day_night_events` | false | The parts described under "Extras, off by default" |
+| `books`, `shrine`, `governance`, `extra_actions`, `day_night_events`, `skills` | false | The parts described under "Extras, off by default" |
 | `world_border_radius` | 1500 | How far from the origin a plan may point; 0 for no limit |
 | `colony_style` | empty | With MineColonies: the building style of a colony a body founds; empty takes the first installed |
 | `colony_shared` | true | With MineColonies: every mind is an officer of each colony a mind owns |
@@ -182,6 +199,7 @@ The endpoint is plain HTTP. Put it behind a TLS proxy or a private network befor
 | `versions/<mc>/.../Compat.java`, `BodyBase.java` | The game calls that differ between Minecraft versions, one copy for each |
 | `versions/<mc>/version.properties` | The NeoForge and Java versions each Minecraft version builds with |
 | `versions/1.21.1/.../Colonies.java`, `ColoniesImpl.java` | What a body does in a MineColonies world; the second is only loaded when that mod is installed |
+| `Skills.java` | The skills a body knows when `skills` is on |
 | `Plan.java` | Actions and intents, and how reflexes pre-empt them |
 | `Reflexes.java` | What a body does without being told |
 | `Tasks.java`, `Crafting.java`, `Menus.java` | What a body can do, and the screen clicks it does it with |

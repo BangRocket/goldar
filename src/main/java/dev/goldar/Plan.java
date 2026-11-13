@@ -247,7 +247,8 @@ public final class Plan {
         Intent i = new Intent();
         i.goal = str(o, "goal");
         i.program = str(o, "program");
-        if (!PROGRAMS.contains(i.program) && !(config.extra_actions && EXTRA_PROGRAMS.contains(i.program))) throw new Rejected("not_allowed");
+        boolean skill = config.skills && Skills.known(i.program) && !PROGRAMS.contains(i.program);
+        if (!PROGRAMS.contains(i.program) && !(config.extra_actions && EXTRA_PROGRAMS.contains(i.program)) && !skill) throw new Rejected("not_allowed");
         JsonObject args = o.getAsJsonObject("arguments"), limits = o.getAsJsonObject("limits");
         int border = config.world_border_radius;
         checkArguments(i.program, args, border);
@@ -255,6 +256,10 @@ public final class Plan {
         i.maxOps = num(limits, "max_block_operations", 1, 10_000);
         for (JsonElement w : o.getAsJsonArray("wake_on")) i.wakeOn.add(w.getAsString());
         if (o.has("preconditions") && o.get("preconditions").isJsonArray()) for (JsonElement p : o.getAsJsonArray("preconditions")) i.preconditions.add(p.getAsString());
+        if (skill) {
+            i.task = Skills.program(i.program, args, border);
+            return i;
+        }
         i.task = switch (i.program) {
             case "travel" -> {
                 JsonElement target = args.get("target");

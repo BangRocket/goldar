@@ -53,6 +53,11 @@ public final class GoldarConfig {
      * `build` and `follow` programs, and word of dusk and dawn.
      */
     public boolean books = false, shrine = false, governance = false, extra_actions = false, day_night_events = false;
+    /**
+     * Skills a body knows from birth, used as an intent's program: plan, bootstrap, chop, strip_mine, smelt, cook,
+     * gather_food, shelter and store. Geldar's minds start with none, so this is off unless switched on.
+     */
+    public boolean skills = false;
     /** How far from the origin a plan may point, as Geldar's world border sets it. 0 for no limit. */
     public int world_border_radius = 1500;
     /** With MineColonies installed: the building style of a colony a body founds. Empty takes the first installed. */

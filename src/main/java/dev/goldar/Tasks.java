@@ -54,6 +54,12 @@ public final class Tasks {
         return false;
     }
 
+    /** True when water or lava touches the block: mining it would let the fluid in on the body. */
+    static boolean wet(ServerLevel level, BlockPos p) {
+        for (Direction d : Direction.values()) if (!level.getFluidState(p.relative(d)).isEmpty()) return true;
+        return false;
+    }
+
     /** True when nothing solid stands between the body's eyes and the block. */
     static boolean inSight(Body b, BlockPos p) {
         Vec3 eyes = b.getEyePosition(), centre = Vec3.atCenterOf(p);
@@ -107,12 +113,14 @@ public final class Tasks {
     public static final class Walk implements Task {
         private static final int MAX_PLANS = 6;
         private static final int STUCK_TICKS = 50;
+        /** The longest one step of a path may take before the way is planned afresh: a body treading water keeps moving and gets nowhere. */
+        private static final int STEP_TICKS = 100;
         private final Function<Body, BlockPos> target;
         private final int range;
         private final Pathfinder.Build build;
         private List<Pathfinder.Step> path;
         private boolean complete;
-        private int index, plans, still;
+        private int index, plans, still, onStep;
         private Vec3 last;
         private Dig dig;
 
@@ -146,6 +154,7 @@ public final class Tasks {
                 path = found.path();
                 complete = found.complete();
                 index = 0;
+                onStep = 0;
                 still = 0;
                 dig = null;
             }
@@ -161,7 +170,8 @@ public final class Tasks {
             }
             Vec3 to = new Vec3(step.pos().getX() + 0.5, step.pos().getY(), step.pos().getZ() + 0.5);
             double dx = to.x - b.getX(), dz = to.z - b.getZ(), dy = to.y - b.getY();
-            if (dx * dx + dz * dz < 0.16 && Math.abs(dy) < 1.1) { index++; still = 0; return null; }
+            if (dx * dx + dz * dz < 0.16 && Math.abs(dy) < 1.1) { index++; still = 0; onStep = 0; return null; }
+            if (++onStep > STEP_TICKS) { path = null; onStep = 0; return null; }
             boolean climb = dy > 0.4 || b.isInWater() || b.horizontalCollision;
             b.steer(to, climb);
             Vec3 now = b.position();
@@ -247,7 +257,8 @@ public final class Tasks {
                 }
                 if (skipped > MAX_SKIPS) return Outcome.fail("not_found", "no " + block + " within " + radius + " that could be reached");
                 BlockPos under = b.blockPosition().below();
-                java.util.function.Predicate<BlockPos> match = p -> !tried.contains(p) && !p.equals(under) && Body.name(level.getBlockState(p)).equals(block);
+                // A block beside water looks open, but mining it pours the water onto the body: those are left alone.
+                java.util.function.Predicate<BlockPos> match = p -> !tried.contains(p) && !p.equals(under) && Body.name(level.getBlockState(p)).equals(block) && !wet(level, p);
                 // A block open to the air comes first; a buried one is reached by digging a way to it.
                 Optional<BlockPos> found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius, p -> match.test(p) && exposed(level, p));
                 if (found.isEmpty()) found = BlockPos.findClosestMatch(b.blockPosition(), radius, radius, match);

@@ -167,6 +167,12 @@ public final class Mcp {
                     .addAll(com.google.gson.JsonParser.parseString(more).getAsJsonArray());
             }
         }
+        if (world.config.skills) {
+            for (JsonElement t : tools) {
+                JsonObject tool = t.getAsJsonObject();
+                if (tool.get("name").getAsString().equals("act")) tool.addProperty("description", tool.get("description").getAsString() + Skills.note());
+            }
+        }
         Map<String, JsonObject> inputs = new HashMap<>();
         for (JsonElement t : tools) inputs.put(t.getAsJsonObject().get("name").getAsString(), t.getAsJsonObject().getAsJsonObject("inputSchema"));
         world.inputSchemas = inputs;
