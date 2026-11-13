@@ -36,7 +36,7 @@ final class Skills {
     static final Map<String, String> ARGS = Map.of(
         "chop", "count (logs, default 8), radius (default 48)",
         "bootstrap", "none: logs, planks, sticks, a crafting table, wooden pickaxe and sword, dirt, then a stone pickaxe",
-        "strip_mine", "length (default 32), y (dig down to this level first), dir (x, -x, z or -z, default x); takes ores and places torches",
+        "strip_mine", "length (default 32), y (dig down to this level first), dir (x, -x, z or -z, default x), stay (true to stay underground); takes ores, places torches, then climbs back up",
         "smelt", "item (what to make, such as iron_ingot), count; places a furnace when none is near",
         "cook", "none: cooks all carried raw meat, fish and potatoes",
         "gather_food", "kills (default 4), radius (default 32): hunts farm animals",
@@ -84,10 +84,13 @@ final class Skills {
             case "chop" -> { only(args, "count", "radius"); yield new Chop(num(args, "count", 1, 256, 8), num(args, "radius", 8, 64, 48)); }
             case "bootstrap" -> { only(args); yield bootstrap(); }
             case "strip_mine" -> {
-                only(args, "length", "y", "dir");
+                only(args, "length", "y", "dir", "stay");
                 String dir = name(args, "dir", "x");
                 if (!Set.of("x", "-x", "z", "-z").contains(dir)) throw new Plan.Rejected("out_of_bounds");
-                yield new StripMine(num(args, "length", 1, 128, 32), args.has("y") ? num(args, "y", -60, 320, 0) : null, dir);
+                Task tunnel = new StripMine(num(args, "length", 1, 128, 32), args.has("y") ? num(args, "y", -60, 320, 0) : null, dir);
+                boolean stay = args.has("stay") && args.get("stay").isJsonPrimitive() && args.get("stay").getAsBoolean();
+                // Back up to the surface afterwards unless told to stay: a body left at the end of a tunnel is easily shut in.
+                yield stay ? tunnel : thenSurface(tunnel);
             }
             case "smelt" -> { only(args, "item", "count"); String item = name(args, "item", null); if (item == null) throw new Plan.Rejected("schema"); yield smelt(item, num(args, "count", 1, 64, 8)); }
             case "cook" -> { only(args); yield cook(); }
@@ -371,24 +374,62 @@ final class Skills {
 
             private int top(Body b) { return b.level().getHeightmapPos(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, b.blockPosition()).getY(); }
 
+            boolean aside;
+
             @Override public Outcome tick(Body b) {
+                int[][] ways = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
                 if (doing != null) {
                     Outcome o = doing.tick(b);
                     if (o == null) return null;
                     doing = null;
-                    if (!o.ok() && turns++ >= 3) return Outcome.fail(o.reason(), "could not climb to the surface: " + o.message());
+                    if (!o.ok() && !aside) {
+                        turns++;
+                        if (turns >= 12) return Outcome.fail(o.reason(), "could not climb to the surface: " + o.message());
+                        // Every way up from here met water or lava: move along underground, away from it, and climb from there.
+                        if (turns % 4 == 0) {
+                            int[] w = ways[(turns / 4) % 4];
+                            aside = true;
+                            doing = Tasks.within(Tasks.Walk.diggingWet(b.blockPosition().offset(w[0] * 10, 0, w[1] * 10), 2), 20 * 120, "timeout", "the climb took too long");
+                            return null;
+                        }
+                    }
+                    aside = false;
                 }
                 int rise = top(b) - b.getBlockY();
                 if (rise <= 1) return Outcome.OK;
-                if (stages++ >= 20) return Outcome.fail("blocked", "could not climb to the surface");
+                if (stages++ >= 30) return Outcome.fail("blocked", "could not climb to the surface");
                 int up = Math.min(rise, 8);
-                int[][] ways = {{1, 0}, {0, 1}, {-1, 0}, {0, -1}};
                 int[] w = ways[turns % 4];
-                doing = Tasks.within(Tasks.Walk.digging(b.blockPosition().offset(w[0] * up, up, w[1] * up), 1), 20 * 120, "timeout", "the climb took too long");
+                BlockPos to = b.blockPosition().offset(w[0] * up, up, w[1] * up);
+                // From water, or once the dry ways up have failed, the climb may dig beside water to get out.
+                boolean wet = b.isInWater() || turns >= 4;
+                doing = Tasks.within(wet ? Tasks.Walk.diggingWet(to, 1) : Tasks.Walk.digging(to, 1), 20 * 120, "timeout", "the climb took too long");
                 return null;
             }
 
             @Override public void stop(Body b) { if (doing != null) doing.stop(b); else b.halt(); }
+        };
+    }
+
+    /** Runs `task`, then climbs to the surface whatever its outcome, and reports the task's outcome. */
+    static Task thenSurface(Task task) {
+        return new Task() {
+            Outcome result;
+            Task climb;
+
+            @Override public Outcome tick(Body b) {
+                if (result == null) {
+                    Outcome o = task.tick(b);
+                    if (o == null) return null;
+                    result = o;
+                    climb = surface();
+                }
+                Outcome c = climb.tick(b);
+                if (c == null) return null;
+                return result.ok() && !c.ok() ? Outcome.fail(c.reason(), "the tunnel is done, but " + c.message()) : result;
+            }
+
+            @Override public void stop(Body b) { (result == null ? task : climb).stop(b); }
         };
     }
 

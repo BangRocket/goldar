@@ -42,7 +42,7 @@ public final class Tasks {
     }
 
     private static final double REACH = 4.5;
-    private static final Pathfinder.Build DIG = new Pathfinder.Build(0, true);
+    private static final Pathfinder.Build DIG = new Pathfinder.Build(0, true), DIG_WET = new Pathfinder.Build(0, true, true);
 
     /** True when the block has a face open to the air, so what it drops lands where a body can walk. */
     static boolean exposed(ServerLevel level, BlockPos p) {
@@ -138,6 +138,40 @@ public final class Tasks {
         /** A walk that may dig its way, as a player tunnels to a block it has no open way to. It never builds. */
         static Walk digging(BlockPos target, int range) { return new Walk(b -> target, range, DIG); }
 
+        /** A digging walk that may also open cells beside water and start from water: the way out of a flooded pocket. */
+        static Walk diggingWet(BlockPos target, int range) { return new Walk(b -> target, range, DIG_WET); }
+
+        /**
+         * Walks there round whatever is in the way, and digs a way only when there is none: a body shut in a tunnel
+         * or a pit gets out as a player would. The dig goes in stages, each a walk can plan, while they bring it closer.
+         */
+        public static Task orDigging(BlockPos target, int range) {
+            return new Task() {
+                private static final int STAGES = 12;
+                Task doing = new Walk(target, range);
+                boolean digging;
+                int stages;
+                double before;
+
+                @Override public Outcome tick(Body b) {
+                    Outcome o = doing.tick(b);
+                    if (o == null || o.ok()) return o;
+                    double now = b.position().distanceTo(Vec3.atBottomCenterOf(target));
+                    // A stage that got nowhere ends the digging: water, lava or bedrock lies that way.
+                    if (digging && (stages >= STAGES || before - now < 2)) return o;
+                    // The first dig keeps clear of water; after that, or from water, it may dig beside water to get out.
+                    boolean wet = digging || b.isInWater();
+                    digging = true;
+                    stages++;
+                    before = now;
+                    doing = wet ? diggingWet(target, range) : digging(target, range);
+                    return null;
+                }
+
+                @Override public void stop(Body b) { doing.stop(b); }
+            };
+        }
+
         private boolean arrived(BlockPos feet, BlockPos goal) {
             if (range == 0) return feet.equals(goal);
             if (range == 1) return Math.abs(feet.getX() - goal.getX()) <= 1 && Math.abs(feet.getY() - goal.getY()) <= 1 && Math.abs(feet.getZ() - goal.getZ()) <= 1;
@@ -153,7 +187,7 @@ public final class Tasks {
             if (path == null || index >= path.size()) {
                 if (path != null && complete) { b.halt(); return Outcome.OK; }
                 if (++plans > MAX_PLANS) { b.halt(); return Outcome.fail("blocked", "no way there"); }
-                var found = new Pathfinder(new LevelTerrain(level(b), b), build)
+                var found = new Pathfinder(new LevelTerrain(level(b), b, build.wet()), build)
                     .find(feet, p -> arrived(p, goal), p -> Math.sqrt(p.distSqr(goal)));
                 if (found.path().isEmpty()) { b.halt(); return Outcome.fail("blocked", "no way there"); }
                 path = found.path();

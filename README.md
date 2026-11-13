@@ -63,7 +63,7 @@ Everything here follows Geldar's code as it runs today, checked against its tool
 - **Tools:** `look`, `status`, `act`, `say`, `wait`, `sleep`, `journal` and `read_book`. Arguments are checked against
   the schemas first, and faults are worded as Geldar words them. A result over 16,384 bytes is refused.
 - **Actions:** `goto`, `mine`, `craft`, `place`, `eat`, `sleep`, `open`, `deposit`, `withdraw`, `attack` and `wait`;
-  any other verb is `not_allowed`. A body walks round obstacles and does not dig its way through.
+  any other verb is `not_allowed`. A body walks round obstacles, and digs a way only when there is none, as one shut in a tunnel or a pit must.
 - **Intents:** `travel`, `gather`, `craft`, `rest` and `flee`, each held to its tick and block limits. A new intent
   ends the old one, and so does anything the intent listed in `wake_on`.
 - **Events:** only Geldar's nine kinds, in its fixed wording. Actions sent without an intent report back as one
@@ -104,7 +104,7 @@ switch them on in the config.
   | `plan` | `rounds` (30), `mine_y` (16) | From nothing to an iron pickaxe, sword and full iron armour, doing the first step still needed each round |
   | `bootstrap` | none | Logs, planks, sticks, a crafting table, wooden pickaxe and sword, dirt for a night, then a stone pickaxe |
   | `chop` | `count` (8), `radius` (48) | Fells the nearest trees, searching further out when none is in range |
-  | `strip_mine` | `length` (32), `y`, `dir` (`x`) | Digs down to `y` as a staircase, then a two-high tunnel, taking ores in reach and setting torches; keeps clear of lava |
+  | `strip_mine` | `length` (32), `y`, `dir` (`x`), `stay` | Digs down to `y` as a staircase, then a two-high tunnel, taking ores in reach and setting torches; keeps clear of lava; climbs back to the surface afterwards unless `stay` is true |
   | `smelt` | `item`, `count` (8) | Smelts in a nearby furnace, crafting and setting one down if needed |
   | `cook` | none | Cooks all carried raw meat, fish and potatoes |
   | `gather_food` | `kills` (4), `radius` (32) | Climbs out if underground, then hunts farm animals and picks up the drops |

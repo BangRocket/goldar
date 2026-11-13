@@ -22,13 +22,20 @@ public final class Pathfinder {
 
     public record Result(List<Step> path, boolean complete) {}
 
-    /** blocks: scaffold blocks available. dig: whether blocks may be broken. */
-    public record Build(int blocks, boolean dig) {
-        public static final Build NONE = new Build(0, false);
+    /**
+     * blocks: scaffold blocks available. dig: whether blocks may be broken. wet: digging may also start in water and
+     * open cells beside it, for a body that must get out of a flooded pocket.
+     */
+    public record Build(int blocks, boolean dig, boolean wet) {
+        public static final Build NONE = new Build(0, false, false);
+
+        public Build(int blocks, boolean dig) { this(blocks, dig, false); }
     }
 
     private static final int MAX_NODES = 40_000;
     private static final int[][] DIRS = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+    /** What a step up or down through water costs when the walk may dig instead. */
+    private static final double DIG_SWIM_COST = 15;
     private static final double PILLAR_COST = 6, BRIDGE_COST = 5, SWIM_COST = 2.5, SUBMERGED_COST = 30, DIG_DOWN_COST = 8, DANGER_COST = 10;
     private static final List<BlockPos> NO_DIG = List.of();
     /** Building moves multiply the options at every node, so that search is steered harder at the goal to finish within MAX_NODES. */
@@ -112,10 +119,12 @@ public final class Pathfinder {
             }
         }
         if (terrain.water(p) || terrain.climb(p)) {
+            // A body swims up a column slowly and often not at all; where it may dig, a staircase is the surer way.
+            double swim = build.dig ? DIG_SWIM_COST : 2;
             BlockPos up = p.above();
-            if (stand(up) && terrain.clear(up.above())) out.add(new Move(up, terrain.water(p) ? 2 : 1.5));
+            if (stand(up) && terrain.clear(up.above())) out.add(new Move(up, terrain.water(p) ? swim : 1.5));
             BlockPos down = p.below();
-            if (stand(down) && (terrain.water(down) || terrain.climb(down))) out.add(new Move(down, 1.5));
+            if (stand(down) && (terrain.water(down) || terrain.climb(down))) out.add(new Move(down, terrain.water(p) && build.dig ? swim : 1.5));
         }
         return out;
     }
@@ -123,13 +132,14 @@ public final class Pathfinder {
     /** Swimming with the head under uses up air, so a route along the surface should always win. */
     private double walkCost(BlockPos p) {
         if (!terrain.water(p)) return 1;
-        return terrain.water(p.above()) ? SUBMERGED_COST : SWIM_COST;
+        double cost = terrain.water(p.above()) ? SUBMERGED_COST : SWIM_COST;
+        return build.dig ? cost * 4 : cost;
     }
 
     private void buildMoves(Node cur, List<Move> out) {
         BlockPos p = cur.pos;
         // A block this path places isn't in the world yet, so the node that placed it counts as supported.
-        boolean firm = !terrain.water(p) && !terrain.climb(p) && (cur.action != Action.WALK || terrain.support(p.below()));
+        boolean firm = (build.wet || !terrain.water(p)) && !terrain.climb(p) && (cur.action != Action.WALK || terrain.support(p.below()));
         if (!firm) return;
         boolean canPlace = cur.used < build.blocks;
         if (canPlace && terrain.clear(p.above(2))) out.add(new Move(p.above(), PILLAR_COST, Action.PILLAR, NO_DIG));

@@ -16,8 +16,12 @@ import net.minecraft.world.phys.shapes.VoxelShape;
 public final class LevelTerrain implements Terrain {
     private final Level level;
     private final Body player;
+    /** Whether a cell beside water may be opened: only to get a body out of a flooded pocket. Lava is never allowed. */
+    private final boolean wet;
 
-    public LevelTerrain(Level level, Body player) { this.level = level; this.player = player; }
+    public LevelTerrain(Level level, Body player, boolean wet) { this.level = level; this.player = player; this.wet = wet; }
+
+    public LevelTerrain(Level level, Body player) { this(level, player, false); }
 
     public static boolean openable(BlockState s) {
         if (s.is(BlockTags.WOODEN_DOORS)) return !s.getValue(DoorBlock.OPEN);
@@ -77,7 +81,7 @@ public final class LevelTerrain implements Terrain {
         if (hardness < 0 || !s.getFluidState().isEmpty() || hazard(s) || level.getBlockEntity(p) != null || s.is(Blocks.CRAFTING_TABLE)) return Double.POSITIVE_INFINITY;
         if (level.getBlockState(p.above()).getBlock() instanceof FallingBlock) return Double.POSITIVE_INFINITY;
         for (Direction d : Direction.values()) {
-            if (d != Direction.DOWN && !level.getFluidState(p.relative(d)).isEmpty()) return Double.POSITIVE_INFINITY;
+            if (!wet && d != Direction.DOWN && !level.getFluidState(p.relative(d)).isEmpty()) return Double.POSITIVE_INFINITY;
             if (level.getFluidState(p.relative(d)).is(FluidTags.LAVA)) return Double.POSITIVE_INFINITY;
         }
         if (lavaWithin(p)) return Double.POSITIVE_INFINITY;

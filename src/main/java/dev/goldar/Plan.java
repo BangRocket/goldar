@@ -128,7 +128,7 @@ public final class Plan {
             String name = target.getAsString();
             return new ToPlayer(name);
         }
-        return new Tasks.Walk(pos(target, border), 1);
+        return Tasks.Walk.orDigging(pos(target, border), 1);
     }
 
     /** A walk up to where a named agent stood when it began. */
