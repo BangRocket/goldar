@@ -109,6 +109,7 @@ public final class Crafting {
         private int made;
         private Walk walk;
         private Smelt smelt;
+        private Task strip;
 
         public Craft(String item, int count) { this.item = item; this.count = count; }
 
@@ -152,6 +153,7 @@ public final class Crafting {
         @Override public Outcome tick(Body b) {
             ServerLevel level = Tasks.level(b);
             if (smelt != null) return smelt.tick(b);
+            if (strip != null) return strip.tick(b);
             if (walk != null) {
                 Outcome o = walk.tick(b);
                 if (o == null) return null;
@@ -189,6 +191,11 @@ public final class Crafting {
                 walk = new Walk(table, 3);
                 return null;
             }
+            // A stripped log or wood is not crafted: an axe is used on the block itself.
+            if (made == 0 && all.isEmpty() && item.startsWith("stripped_") && Compat.block(item.substring("stripped_".length())).isPresent()) {
+                strip = new Strip(item, count);
+                return strip.tick(b);
+            }
             // Nothing on a grid makes it: a furnace might.
             if (made == 0 && Goldar.world().config.extra_actions && Smelt.recipeFor(b, item) != null) {
                 smelt = new Smelt(item, count);
@@ -198,6 +205,68 @@ public final class Crafting {
             if (known.isEmpty()) return Outcome.fail("not_possible", "the recipe for " + item + " is not unlocked");
             return Outcome.fail("missing_materials", "missing " + (missing == null ? "materials" : missing));
         }
+    }
+
+    /**
+     * Strips logs as a player does: sets a log down beside the body, uses an axe on it, then breaks the stripped block and
+     * picks it up. One at a time, until `count` are made.
+     */
+    static final class Strip implements Task {
+        private final String item, source;
+        private final int count;
+        private int made, stage, misplaced;
+        private BlockPos spot;
+        private Task doing;
+
+        Strip(String item, int count) { this.item = item; this.source = item.substring("stripped_".length()); this.count = count; }
+
+        private static int axe(Body b) {
+            var items = Compat.items(b.getInventory());
+            for (int i = 0; i < items.size(); i++) if (!items.get(i).isEmpty() && Body.name(items.get(i)).endsWith("_axe")) return i;
+            return -1;
+        }
+
+        @Override public Outcome tick(Body b) {
+            ServerLevel level = Tasks.level(b);
+            if (doing != null) {
+                Outcome o = doing.tick(b);
+                if (o == null) return null;
+                doing = null;
+                // A spot the log would not go on: try another, a few times.
+                if (!o.ok() && stage == 1 && ++misplaced <= 3) { stage = 0; return null; }
+                if (!o.ok()) return made > 0 ? Outcome.fail(o.reason(), "stripped " + made + " of " + count + ": " + o.message()) : o;
+                if (stage == 2) { made++; stage = 0; misplaced = 0; }
+            }
+            if (made >= count) return Outcome.OK;
+            if (axe(b) < 0) return Outcome.fail("missing_materials", "missing an axe");
+            switch (stage) {
+                case 0 -> {
+                    if (b.count(source) < 1) return Outcome.fail("missing_materials", "missing " + source);
+                    spot = Skills.freeSpot(b);
+                    if (spot == null) return Outcome.fail("blocked", "no free spot to set the " + source + " down");
+                    doing = new Tasks.Place(source, spot);
+                    stage = 1;
+                    return null;
+                }
+                case 1 -> {
+                    if (!Body.name(level.getBlockState(spot)).equals(source)) return Outcome.fail("blocked", "the " + source + " was not set down");
+                    b.hold(axe(b));
+                    Vec3 top = Vec3.atCenterOf(spot).add(0, 0.5, 0);
+                    b.lookAt(top);
+                    b.gameMode.useItemOn(b, level, b.getMainHandItem(), net.minecraft.world.InteractionHand.MAIN_HAND,
+                        new net.minecraft.world.phys.BlockHitResult(top, net.minecraft.core.Direction.UP, spot, false));
+                    b.swing(net.minecraft.world.InteractionHand.MAIN_HAND);
+                    if (!Body.name(level.getBlockState(spot)).equals(item)) return Outcome.fail("not_possible", source + " does not strip into " + item);
+                    // Break it and pick it up: the axe is the fastest tool for it.
+                    doing = new Tasks.Mine(item, 1, 4, item, b.count(item) + 1);
+                    stage = 2;
+                    return null;
+                }
+                default -> { return Outcome.fail("not_possible", "stripping went wrong"); }
+            }
+        }
+
+        @Override public void stop(Body b) { if (doing != null) doing.stop(b); else b.halt(); }
     }
 
     static BlockPos nearest(Body b, String block) {

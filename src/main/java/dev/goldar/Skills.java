@@ -235,9 +235,12 @@ final class Skills {
                         BlockPos p = feet.offset(dx, dy, dz);
                         BlockPos under = p.below();
                         String below = Body.name(level.getBlockState(under));
+                        // A block cannot be set down where the body itself stands, even partly.
+                        if (b.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(p))) continue;
                         if (empty(level, p) && empty(level, p.above()) && !level.getBlockState(under).getCollisionShape(level, under).isEmpty()
                             && level.getFluidState(under).isEmpty() && !below.endsWith("crafting_table") && !below.endsWith("furnace") && !below.endsWith("chest")
-                            && !below.endsWith("_bed") && Tasks.inSight(b, p)) {
+                            && !below.endsWith("_bed") && !below.endsWith("_fence") && !below.endsWith("_fence_gate") && !below.endsWith("_wall") && !below.endsWith("_door")
+                            && !below.endsWith("_slab") && !below.endsWith("_stairs") && Tasks.inSight(b, p)) {
                             return p;
                         }
                     }

@@ -54,6 +54,14 @@ public final class Tasks {
         return false;
     }
 
+    /** Right-clicks a block, as a player opens a door or a gate. */
+    static void use(Body b, BlockPos p) {
+        Vec3 centre = Vec3.atCenterOf(p);
+        b.lookAt(centre);
+        b.gameMode.useItemOn(b, level(b), b.getMainHandItem(), InteractionHand.MAIN_HAND, new BlockHitResult(centre, Direction.UP, p, false));
+        b.swing(InteractionHand.MAIN_HAND);
+    }
+
     /** True when water or lava touches the block: mining it would let the fluid in on the body. */
     static boolean wet(ServerLevel level, BlockPos p) {
         for (Direction d : Direction.values()) if (!level.getFluidState(p.relative(d)).isEmpty()) return true;
@@ -126,8 +134,36 @@ public final class Tasks {
         private List<Pathfinder.Step> path;
         private boolean complete;
         private int index, plans, still, onStep;
+        /** Doors and gates this walk opened, to shut again once the body is through. */
+        private final java.util.List<BlockPos> opened = new java.util.ArrayList<>();
+        /** Of those, the ones the body has stepped through. */
+        private final java.util.Set<BlockPos> passed = new java.util.HashSet<>();
         private Vec3 last;
         private Dig dig;
+
+        /** Shuts the doors and gates this walk opened once the body has gone through them; when the walk ends, all of them. */
+        private void shutBehind(Body b, boolean ending) {
+            for (java.util.Iterator<BlockPos> it = opened.iterator(); it.hasNext(); ) {
+                BlockPos p = it.next();
+                // In the doorway, or not through it yet: leave it open.
+                var doorway = new net.minecraft.world.phys.AABB(p).expandTowards(0, 1, 0);
+                if (b.getBoundingBox().intersects(doorway.inflate(0.05))) passed.add(p);
+                // Standing in the doorway keeps it open; a body only brushing it does not.
+                if (b.blockPosition().equals(p) || !ending && b.getBoundingBox().deflate(0.05).intersects(doorway)) continue;
+                if (!passed.contains(p) && !ending) continue;
+                it.remove();
+                passed.remove(p);
+                BlockState s = level(b).getBlockState(p);
+                boolean open = s.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN)
+                    && s.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.OPEN);
+                if (open && b.getEyePosition().distanceTo(Vec3.atCenterOf(p)) <= REACH) use(b, p);
+            }
+        }
+
+        @Override public void stop(Body b) {
+            b.halt();
+            shutBehind(b, true);
+        }
 
         public Walk(Function<Body, BlockPos> target, int range, Pathfinder.Build build) { this.target = target; this.range = range; this.build = build; }
 
@@ -183,9 +219,9 @@ public final class Tasks {
             b.pathTick = b.tickCount;
             if (goal == null) { b.halt(); return Outcome.fail("not_found", "the target is gone"); }
             BlockPos feet = b.blockPosition();
-            if (arrived(feet, goal)) { b.halt(); return Outcome.OK; }
+            if (arrived(feet, goal)) { b.halt(); shutBehind(b, true); return Outcome.OK; }
             if (path == null || index >= path.size()) {
-                if (path != null && complete) { b.halt(); return Outcome.OK; }
+                if (path != null && complete) { b.halt(); shutBehind(b, true); return Outcome.OK; }
                 if (++plans > MAX_PLANS) { b.halt(); return Outcome.fail("blocked", "no way there"); }
                 var found = new Pathfinder(new LevelTerrain(level(b), b, build.wet()), build)
                     .find(feet, p -> arrived(p, goal), p -> Math.sqrt(p.distSqr(goal)));
@@ -198,6 +234,19 @@ public final class Tasks {
                 dig = null;
             }
             Pathfinder.Step step = path.get(index);
+            shutBehind(b, false);
+            // A closed door or gate on the way is opened as a player opens it; the planner already counts it as a way through.
+            for (BlockPos cell : List.of(step.pos(), step.pos().above())) {
+                if (!LevelTerrain.openable(level(b).getBlockState(cell))) continue;
+                if (b.getEyePosition().distanceTo(Vec3.atCenterOf(cell)) > REACH) break;
+                b.halt();
+                use(b, cell);
+                if (!LevelTerrain.openable(level(b).getBlockState(cell))) {
+                    BlockPos lower = level(b).getBlockState(cell.below()).is(level(b).getBlockState(cell).getBlock()) ? cell.below() : cell;
+                    if (!opened.contains(lower)) opened.add(lower.immutable());
+                }
+                return null;
+            }
             for (BlockPos cell : step.dig()) {
                 BlockState s = level(b).getBlockState(cell);
                 if (s.isAir() || s.getCollisionShape(level(b), cell).isEmpty()) continue;

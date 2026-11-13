@@ -63,7 +63,9 @@ Everything here follows Geldar's code as it runs today, checked against its tool
 - **Tools:** `look`, `status`, `act`, `say`, `wait`, `sleep`, `journal` and `read_book`. Arguments are checked against
   the schemas first, and faults are worded as Geldar words them. A result over 16,384 bytes is refused.
 - **Actions:** `goto`, `mine`, `craft`, `place`, `eat`, `sleep`, `open`, `deposit`, `withdraw`, `attack` and `wait`;
-  any other verb is `not_allowed`. A body walks round obstacles, and digs a way only when there is none, as one shut in a tunnel or a pit must.
+  any other verb is `not_allowed`. A body walks round obstacles, opens the wooden doors and fence gates on its way and
+  shuts them behind it, and digs a way only when there is none, as one shut in a tunnel or a pit must. `craft` makes a
+  stripped log or wood the way a player does, with an axe on the block.
 - **Intents:** `travel`, `gather`, `craft`, `rest` and `flee`, each held to its tick and block limits. A new intent
   ends the old one, and so does anything the intent listed in `wake_on`.
 - **Events:** only Geldar's nine kinds, in its fixed wording. Actions sent without an intent report back as one
@@ -124,7 +126,9 @@ Geldar has no mods, so none of this changes what a mind sees on a plain server. 
 - **Joining:** a body wakes although the mod sends its own packets to every player who joins.
 - **Names:** `place`, `mine` and `gather` take a mod's block by its name without the namespace, such as `blockhuttownhall`.
 - **Huts:** the mod does not let a click place a hut; it opens a window. `place` does what the window's "place directly"
-  button does, under the mod's own rules for who may build where.
+  button does, under the mod's own rules for who may build where. A player sees in the build tool where a building will
+  stand; a body is told instead: a hut whose building would overlap another in the colony is refused, with the ground
+  each needs and the shortest move that clears it.
 - **Founding:** a town hall placed outside any colony founds the body's colony, named after the body, in the style
   `colony_style` names.
 - **Building:** a hut placed in a colony is ordered from the colony's builder at once, as the hut window's build button

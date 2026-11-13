@@ -1,5 +1,7 @@
 package dev.goldar;
 
+import com.ldtteam.structurize.api.RotationMirror;
+import com.ldtteam.structurize.blueprints.v1.Blueprint;
 import com.ldtteam.structurize.storage.ServerFutureProcessor;
 import com.ldtteam.structurize.storage.StructurePackMeta;
 import com.ldtteam.structurize.storage.StructurePacks;
@@ -10,6 +12,7 @@ import com.minecolonies.api.colony.buildings.IBuilding;
 import com.minecolonies.api.colony.permissions.Action;
 import com.minecolonies.api.items.component.ColonyId;
 import com.minecolonies.api.items.component.HutBlockData;
+import com.minecolonies.api.util.ColonyUtils;
 import com.minecolonies.core.blocks.huts.BlockHutTownHall;
 import com.minecolonies.core.event.EventHandler;
 import com.minecolonies.core.network.messages.server.CreateColonyMessage;
@@ -102,6 +105,9 @@ final class ColoniesImpl {
         private boolean looked, found;
         private String style;
         private int toldBefore;
+        /** Whether the ground the hut's building will need has been checked against the colony's other buildings. */
+        private boolean checked, measured;
+        private Blueprint plan;
 
         Hut(String name, BlockPos at) { this.name = name; this.at = at; }
 
@@ -146,6 +152,17 @@ final class ColoniesImpl {
                     if (pack == null) return Outcome.fail("not_possible", "no building style is installed");
                     StructurePackMeta chosen = pack;
                     style = chosen.getName();
+
+                    // A player sees where a building will stand before setting its hut down; a body is told instead.
+                    if (!checked && colony != null) {
+                        AbstractBlockHut<?> kind = hut;
+                        ServerFutureProcessor.queueBlueprint(new ServerFutureProcessor.BlueprintProcessingData(
+                            StructurePacks.findBlueprintFuture(style, bp -> bp.getBlockState(bp.getPrimaryBlockOffset()).getBlock() == kind, level.registryAccess()),
+                            level, blueprint -> { plan = blueprint; measured = true; }));
+                        stage = 5;
+                        waited = 0;
+                        return null;
+                    }
 
                     BlockState state = hut.defaultBlockState().setValue(AbstractBlockHut.FACING, Direction.fromYRot(b.getYRot()));
                     ItemStack used = stack.copyWithCount(1);
@@ -203,6 +220,22 @@ final class ColoniesImpl {
                         return null;
                     }
                     stage = 3;
+                    return null;
+                }
+                case 5 -> {
+                    if (!measured) return ++waited > BLUEPRINT_TICKS ? refuse(b, "the plan of this hut's building was not found in time") : null;
+                    checked = true;
+                    stage = 0;
+                    IColony colony = colonies.getColonyByPosFromWorld(level, at);
+                    if (plan == null || colony == null) return null;
+                    var mine = ColonyUtils.calculateCorners(at, level, plan, RotationMirror.NONE);
+                    for (IBuilding other : colony.getServerBuildingManager().getBuildings().values()) {
+                        var theirs = other.getCorners();
+                        if (!overlap(mine.getA(), mine.getB(), theirs.getA(), theirs.getB())) continue;
+                        return refuse(b, "The " + name + " at " + at.toShortString() + " would need " + span(mine.getA(), mine.getB()) + ", which overlaps the "
+                            + plain(other.getBuildingDisplayName()) + " at " + other.getID().toShortString() + " (" + span(theirs.getA(), theirs.getB()) + "). "
+                            + clear(mine.getA(), mine.getB(), theirs.getA(), theirs.getB()));
+                    }
                     return null;
                 }
                 case 2 -> {
@@ -311,6 +344,31 @@ final class ColoniesImpl {
         return b.containerMenu == b.inventoryMenu ? null : b.containerMenu;
     }
 
+    // ---- where buildings stand ----
+
+    /** True when two buildings' grounds share any column. */
+    static boolean overlap(BlockPos a1, BlockPos a2, BlockPos b1, BlockPos b2) {
+        return Math.min(a1.getX(), a2.getX()) <= Math.max(b1.getX(), b2.getX()) && Math.max(a1.getX(), a2.getX()) >= Math.min(b1.getX(), b2.getX())
+            && Math.min(a1.getZ(), a2.getZ()) <= Math.max(b1.getZ(), b2.getZ()) && Math.max(a1.getZ(), a2.getZ()) >= Math.min(b1.getZ(), b2.getZ());
+    }
+
+    /** A building's ground, as x from..to and z from..to with its size. */
+    static String span(BlockPos a, BlockPos c) {
+        int x1 = Math.min(a.getX(), c.getX()), x2 = Math.max(a.getX(), c.getX()), z1 = Math.min(a.getZ(), c.getZ()), z2 = Math.max(a.getZ(), c.getZ());
+        return "x " + x1 + ".." + x2 + ", z " + z1 + ".." + z2 + " (" + (x2 - x1 + 1) + " by " + (z2 - z1 + 1) + ")";
+    }
+
+    /** The shortest move along one axis that takes a new building's ground clear of another's. */
+    static String clear(BlockPos a1, BlockPos a2, BlockPos b1, BlockPos b2) {
+        int ax1 = Math.min(a1.getX(), a2.getX()), ax2 = Math.max(a1.getX(), a2.getX()), az1 = Math.min(a1.getZ(), a2.getZ()), az2 = Math.max(a1.getZ(), a2.getZ());
+        int bx1 = Math.min(b1.getX(), b2.getX()), bx2 = Math.max(b1.getX(), b2.getX()), bz1 = Math.min(b1.getZ(), b2.getZ()), bz2 = Math.max(b1.getZ(), b2.getZ());
+        int[] moves = {bx2 - ax1 + 1, ax2 - bx1 + 1, bz2 - az1 + 1, az2 - bz1 + 1};
+        String[] ways = {"east (+x)", "west (-x)", "south (+z)", "north (-z)"};
+        int best = 0;
+        for (int i = 1; i < 4; i++) if (moves[i] < moves[best]) best = i;
+        return "Placing it " + moves[best] + " blocks further " + ways[best] + " would clear it; check that spot against the other buildings too.";
+    }
+
     // ---- what a hut's window would show ----
 
     private static String plain(String key) { return key == null ? "" : Component.translatable(key).getString(); }
@@ -376,8 +434,9 @@ final class ColoniesImpl {
     static void report(Body b, IColony colony, IBuilding building) {
         List<String> lines = new ArrayList<>();
         BlockPos at = building.getID();
+        var ground = building.getCorners();
         lines.add(plain(building.getBuildingDisplayName()) + " at " + at.toShortString() + " in " + colony.getName() + ": level " + building.getBuildingLevel()
-            + " of " + building.getMaxBuildingLevel() + (building.isPendingConstruction() ? ", building ordered" : "") + ".");
+            + " of " + building.getMaxBuildingLevel() + (building.isPendingConstruction() ? ", building ordered" : "") + "; its building covers " + span(ground.getA(), ground.getB()) + ".");
         List<WorkerBuildingModule> jobs = building.getModules(WorkerBuildingModule.class);
         for (WorkerBuildingModule job : jobs) {
             List<String> names = new ArrayList<>();
