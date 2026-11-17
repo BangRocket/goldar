@@ -77,6 +77,11 @@ public final class Mind {
     public long bornDay = -1;
     /** The last event the last sleep took into its digest. */
     public long sleepCursor;
+    /**
+     * The newest event a `wait` has shown this mind, or -1 before the first. A `wait` with no cursor starts here, so an
+     * intent that ended between two calls, or while a new session of the mind began, is still reported.
+     */
+    public volatile long shown = -1;
     public Plan plan = new Plan();
     /** The newest lines heard, oldest first. Server thread only. */
     public final Deque<Heard> heard = new ArrayDeque<>();

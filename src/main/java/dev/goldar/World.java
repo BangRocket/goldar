@@ -563,7 +563,9 @@ public final class World {
 
     private Reply await(Mind mind, JsonObject args) throws Exception {
         long head = mind.head();
-        long cursor = head;
+        // With no cursor, a wait starts after the last event this mind was shown, not at "now": what happened between its
+        // calls is not lost. Before its first wait it starts at "now", as Geldar's does.
+        long cursor = mind.shown >= 0 && mind.shown <= head ? mind.shown : head;
         String given = text(args, "cursor");
         if (given != null) {
             cursor = Long.parseLong(given.substring(2));
@@ -617,7 +619,11 @@ public final class World {
         JsonObject out = new JsonObject();
         out.add("snapshot", view.snapshot());
         out.add("events", events);
-        out.addProperty("cursor", "c_" + mind.head());
+        // Through the newest event in this reply: one that came in while it was being put together is still to come.
+        long shownThrough = cursor;
+        for (Mind.Event e : since.events()) shownThrough = Math.max(shownThrough, e.seq);
+        mind.shown = shownThrough;
+        out.addProperty("cursor", "c_" + shownThrough);
         out.addProperty("wake_reason", woke.reason());
         out.addProperty("dropped_events", dropped);
         out.add("untrusted_world_text", world);

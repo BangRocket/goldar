@@ -5,3 +5,10 @@ logs/
 *.iml
 .idea/
 run-*/
+
+# A mind deployment: its secrets, settings and briefs stay out of the repo.
+minds/secrets/
+minds/mind.env
+minds/compose.yml
+minds/briefs/*
+!minds/briefs/example/

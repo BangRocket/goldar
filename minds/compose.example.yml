@@ -1,0 +1,55 @@
+# Two minds for one Goldar world. Copy to compose.yml, fill in the files named below, then:
+#   docker compose up -d --build
+# Each mind keeps its conversation in its own volume; FRESH=1 in its environment starts it over.
+
+x-mind: &mind
+  build: .
+  image: goldar-mind:local
+  restart: unless-stopped
+  env_file: mind.env              # GOLDAR_URL, MODEL and the like, shared by every mind
+  mem_limit: 768m
+  cpus: 1.0
+  logging:
+    driver: json-file
+    options: { max-size: 10m, max-file: "3" }
+
+services:
+  clara:
+    <<: *mind
+    environment:
+      PLAYER_ID: ag-clara-01
+    secrets:
+      - source: claude_credentials
+        target: claude_credentials
+      - source: clara_token
+        target: goldar_token
+    volumes:
+      - clara:/mind
+      - ./briefs/clara:/brief:ro       # brief.md, and carry-on.md if you want your own
+
+  tess:
+    <<: *mind
+    environment:
+      PLAYER_ID: ag-tess-01
+    secrets:
+      - source: claude_credentials
+        target: claude_credentials
+      - source: tess_token
+        target: goldar_token
+    volumes:
+      - tess:/mind
+      - ./briefs/tess:/brief:ro
+
+secrets:
+  # An Anthropic API key, or a long-lived Claude Code token from `claude setup-token`. mind.env says which.
+  claude_credentials:
+    file: ./secrets/claude_credentials
+  # Each player's token, as `goldar add` or `goldar token` printed it.
+  clara_token:
+    file: ./secrets/clara.token
+  tess_token:
+    file: ./secrets/tess.token
+
+volumes:
+  clara:
+  tess:

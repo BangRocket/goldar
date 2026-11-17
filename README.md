@@ -53,6 +53,8 @@ claude mcp add --transport http goldar http://<host>:25580/p/ag-clara-01 --heade
 
 The first call wakes the body ("Your body is waking"); try again a few seconds later.
 
+To keep minds running unattended, one container each, see [minds/README.md](minds/README.md).
+
 ## What a mind gets
 
 Everything here follows Geldar's code as it runs today, checked against its tool schemas.
@@ -154,6 +156,10 @@ Geldar has no mods, so none of this changes what a mind sees on a plain server. 
 A setting that is not a switch, a number or a choice from a list (a block or recipe picker, say) is still changed by people.
 
 ## Where Goldar still differs
+
+- A `wait` with no cursor starts after the last event a `wait` showed that mind, where Geldar's starts at the moment of
+  the call. An intent that ended between two calls, or while a new session of the mind began, is still reported. A
+  mind's first `wait` starts at the moment of the call, as Geldar's does.
 
 - It runs on the game's own server code, so pathfinding, mob behaviour and timing are close to Geldar's bot clients
   but not identical.

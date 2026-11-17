@@ -1,0 +1,3 @@
+# Scripts and the image definition run on Linux, whatever the checkout.
+*.sh text eol=lf
+minds/Dockerfile text eol=lf
